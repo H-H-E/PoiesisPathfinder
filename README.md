@@ -59,7 +59,8 @@ Important variables:
 | `PORTKEY_CONFIG` | Optional Portkey config object/header value if provider-only routing is not enough. |
 | `DATABASE_PATH` | SQLite database path for student records and token totals. |
 | `REDIS_URL` | Redis connection URL. |
-| `POIESIS_ADMIN_TOKEN` | Token required by dashboard server routes when calling FastAPI admin endpoints. The current backend only enforces admin auth when this is set, so set it for any shared environment. |
+| `POIESIS_ADMIN_TOKEN` | Token required by dashboard server routes when calling FastAPI admin endpoints. Required unless `ALLOW_INSECURE_ADMIN=true`. |
+| `ALLOW_INSECURE_ADMIN` | Explicit development-only escape hatch. Leave `false` for shared or production-like environments. |
 | `DRY_RUN_UPSTREAM` | `true` returns local OpenAI-shaped responses without contacting Portkey or Minimax. |
 | `ALLOW_STREAMING` | Defaults to `false`; streaming is blocked because accounting needs the final `usage` block. |
 | `GATEWAY_BRAIN_PORT`, `DASHBOARD_PORT`, `PORTKEY_PORT`, `REDIS_PORT` | Optional host port overrides for `docker compose` when the defaults are already in use. |
@@ -78,7 +79,8 @@ Use dry-run mode for local verification so Minimax is not contacted.
 
    The Compose file has safe dry-run defaults, but a real `.env` keeps operator
    tokens and future upstream settings explicit. Change `POIESIS_ADMIN_TOKEN`
-   before using the stack on a shared network.
+   before using the stack on a shared network, and leave
+   `ALLOW_INSECURE_ADMIN=false`.
 
 2. Start the stack:
 
@@ -216,9 +218,9 @@ It polls `/api/users`, which proxies to FastAPI `/admin/users`. Mutation routes
 reset rate windows, lock or unlock keys, and apply token deltas through the
 dashboard server so `POIESIS_ADMIN_TOKEN` stays server-side.
 
-Current hardening caveat: FastAPI admin routes fail open if
-`POIESIS_ADMIN_TOKEN` is missing. Always set the token in local shared, staging,
-or production-like environments.
+FastAPI admin routes fail closed when `POIESIS_ADMIN_TOKEN` is missing. The only
+way to run admin routes without a token is to set `ALLOW_INSECURE_ADMIN=true`,
+which is for isolated development only.
 
 ## Verification Commands
 

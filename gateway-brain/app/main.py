@@ -39,6 +39,10 @@ def get_app_settings() -> Settings:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    if not settings.poiesis_admin_token and not settings.allow_insecure_admin:
+        raise RuntimeError(
+            "POIESIS_ADMIN_TOKEN is required unless ALLOW_INSECURE_ADMIN=true."
+        )
     database.initialize_database(settings.database_path)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     app.state.redis = redis
@@ -83,7 +87,14 @@ def require_admin(
     x_admin_token: Annotated[str | None, Header(alias="x-admin-token")] = None,
     settings: Settings = Depends(get_app_settings),
 ) -> None:
-    if settings.poiesis_admin_token and x_admin_token != settings.poiesis_admin_token:
+    if settings.allow_insecure_admin and not settings.poiesis_admin_token:
+        return
+    if not settings.poiesis_admin_token:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin authentication is not configured.",
+        )
+    if x_admin_token != settings.poiesis_admin_token:
         raise HTTPException(status_code=401, detail="Missing or invalid admin token.")
 
 

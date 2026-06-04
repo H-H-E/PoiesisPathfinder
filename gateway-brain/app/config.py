@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 120.0
     cors_origins: str = "http://localhost:3000"
     poiesis_admin_token: str | None = None
+    allow_insecure_admin: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -55,7 +55,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 ## Milestone 3: FastAPI Governance Brain
 
-- [ ] Fail closed when admin auth is not configured.
+- [x] Fail closed when admin auth is not configured.
   - Acceptance: admin routes are protected unless an explicit insecure-development flag is set.
 - [ ] Harden pre-flight authentication.
   - Verify `Authorization: Bearer sk-poiesis-...`.
