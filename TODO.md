@@ -7,8 +7,8 @@ Hermes client -> FastAPI governance brain -> Portkey sidecar -> Minimax API.
 ## Release Gates Before Real Minimax Traffic
 
 - [ ] **Gate A - Dry-run local system:** compose starts, seed job runs, dashboard loads, dry-run chat succeeds, and spam curl blocks locally without contacting Minimax.
-- [ ] **Gate B - Security baseline:** admin auth fails closed, raw virtual keys are not exposed outside FastAPI, Redis keys do not contain usable secrets, and every request receives a correlation ID.
-- [ ] **Gate C - Quota integrity:** burst and five-hour windows are checked atomically, missing usage is handled by policy, concurrent requests cannot race past quota, and monthly cap crossing locks the key immediately.
+- [x] **Gate B - Security baseline:** admin auth fails closed, raw virtual keys are not exposed outside FastAPI, Redis keys do not contain usable secrets, and every request receives a correlation ID.
+- [x] **Gate C - Quota integrity:** burst and five-hour windows are checked atomically, missing usage is handled by policy, concurrent requests cannot race past quota, and monthly cap crossing locks the key immediately.
 - [ ] **Gate D - Real Portkey/Minimax probe:** one controlled non-dry-run request proves Portkey provider configuration, `usage` shape, token accounting, and upstream error handling.
 - [x] **Gate E - Operator runbook:** a coding-club operator can start, verify, monitor, reset, lock, rotate, and recover keys from documented procedures.
 

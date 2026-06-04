@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app import database
 from app.config import Settings
-from app.limiter import LimitStatus
+from app.limiter import LimitStatus, SlidingWindowLimiter
 from app.main import app, forward_to_portkey, get_app_settings, limiter_from_state
 from seed_club import DEFAULT_STUDENTS
 
@@ -209,6 +209,31 @@ def test_chat_auth_rejects_missing_malformed_unknown_and_inactive_keys(
         app.dependency_overrides.clear()
 
 
+def test_admin_routes_fail_closed_without_configured_admin_token(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        poiesis_admin_token="",
+        allow_insecure_admin=False,
+    )
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: AllowingLimiter()
+
+    try:
+        client = TestClient(app)
+        response = client.get(
+            "/admin/users",
+            headers={"x-admin-token": "anything"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["message"] == "Admin authentication is not configured."
+
+
 def test_admin_users_payload_hides_raw_keys_and_hashes(tmp_path: Path) -> None:
     database_path = tmp_path / "club.db"
     database.initialize_database(str(database_path))
@@ -240,6 +265,14 @@ def test_admin_users_payload_hides_raw_keys_and_hashes(tmp_path: Path) -> None:
     assert "virtual_key_hash" not in ada
     assert ADA_STUDENT_ID in limiter.peek_identities
     assert ADA_KEY not in limiter.peek_identities
+
+
+def test_redis_limiter_keys_use_student_id_not_raw_virtual_key() -> None:
+    key = SlidingWindowLimiter._key(ADA_STUDENT_ID, "standard", "window")
+
+    assert key == f"poiesis:rate:standard:window:{ADA_STUDENT_ID}"
+    assert ADA_KEY not in key
+    assert "sk-poiesis-" not in key
 
 
 def test_admin_reset_window_endpoint_resets_standard_high_speed_or_all_windows(
