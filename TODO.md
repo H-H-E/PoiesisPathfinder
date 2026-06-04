@@ -46,11 +46,11 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 - [x] Seed exactly seven initial student records.
   - Acceptance: every record has `student_id`, `student_name`, `key_preview`, `total_tokens_consumed = 0`, and `is_active = true`, and admin listings do not expose the raw bearer key.
-- [ ] Support secure key regeneration.
+- [x] Support secure key regeneration.
   - Acceptance: `python seed_club.py --random` creates seven non-demo keys without printing secrets anywhere except the operator terminal.
-- [ ] Add an operator checklist for key distribution.
+- [x] Add an operator checklist for key distribution.
   - Include student handoff, lost-key rotation, and what to do if a key leaks.
-- [ ] Add a key format policy.
+- [x] Add a key format policy.
   - Acceptance: all student keys use the `sk-poiesis-...` prefix and are easy to distinguish from the Minimax master key.
 
 ## Milestone 3: FastAPI Governance Brain

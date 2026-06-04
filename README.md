@@ -168,6 +168,32 @@ and rerun `docker compose up --build`.
 
 6. Open the dashboard at `http://localhost:3000`.
 
+## Student Key Distribution
+
+Student bearer keys must start with `sk-poiesis-`. That prefix lets operators
+and students distinguish local club gateway keys from the master Minimax or
+Portkey credential, which must never be sent to students or clients.
+
+Use the documented demo keys only for local dry-run checks. For a real club
+session, generate fresh keys in the operator terminal:
+
+```bash
+cd gateway-brain
+python seed_club.py --database ./data/database.db --random
+```
+
+The command prints the seven fresh student keys once for handoff, while SQLite
+stores only HMAC hashes and short previews. Do not paste generated keys into
+Git, shared chat, slides, or the dashboard. Send each student exactly one key
+out-of-band, ask them to use it as `Authorization: Bearer sk-poiesis-...`, and
+verify the dashboard shows only `key_preview` values.
+
+If a student loses a key, run `python seed_club.py --random` in a controlled
+maintenance window, send the replacement key out-of-band, and verify the old key
+returns HTTP 401. If a key leaks, immediately lock the affected student in the
+dashboard, rotate with `--random`, reset rate windows only after reviewing the
+audit feed, and distribute the new key out-of-band.
+
 ## Dry-Run Chat Check
 
 Use one of the seeded demo keys from `gateway-brain/seed_club.py`:

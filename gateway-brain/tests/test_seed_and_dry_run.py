@@ -156,6 +156,42 @@ def test_seed_script_creates_exactly_seven_active_students(
         assert user["is_active"] is True
 
 
+def test_random_seed_creates_non_demo_keys_and_persists_only_safe_previews(
+    tmp_path: Path,
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    database_path = tmp_path / "club.db"
+    generated_tokens = [f"generated-token-{index}" for index in range(7)]
+    generated_keys = [f"sk-poiesis-{token}" for token in generated_tokens]
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["seed_club.py", "--database", str(database_path), "--random"],
+    )
+    monkeypatch.setattr("seed_club.secrets.token_urlsafe", lambda _: generated_tokens.pop(0))
+
+    seed_main()
+
+    output = capsys.readouterr().out
+    users = database.list_users(str(database_path))
+    serialized_users = json.dumps(users)
+
+    assert len(users) == 7
+    for _, demo_key in DEFAULT_STUDENTS:
+        assert demo_key not in output
+        assert demo_key not in serialized_users
+    for generated_key in generated_keys:
+        assert generated_key in output
+        assert generated_key not in serialized_users
+    for user in users:
+        assert user["key_preview"].startswith("sk-poiesis-")
+        assert "..." in user["key_preview"]
+        assert "virtual_key" not in user
+        assert "virtual_key_hash" not in user
+
+
 def test_short_key_preview_never_exposes_full_key() -> None:
     short_key = "sk-poiesis-a"
 
