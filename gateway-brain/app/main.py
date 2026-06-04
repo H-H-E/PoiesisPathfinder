@@ -198,6 +198,10 @@ def audit_error_class(exc: HTTPException) -> str:
         return "streaming_disabled"
     if "rate limiter unavailable" in message:
         return "rate_limiter_unavailable"
+    if "model is blocked" in message:
+        return "model_blocked"
+    if "model is not allowed" in message:
+        return "model_not_allowed"
     if "request body exceeds" in message or "exceeds the limit" in message:
         return "request_too_large"
     if exc.status_code == 401:
@@ -354,6 +358,39 @@ def validate_chat_payload(
                 f"messages content exceeds {settings.max_total_message_content_chars} total characters.",
                 key_preview=key_preview,
                 limit=settings.max_total_message_content_chars,
+            ),
+        )
+
+
+def enforce_model_policy(
+    *,
+    settings: Settings,
+    student_id: str,
+    model: str,
+    key_preview: str,
+) -> None:
+    blocked_models = settings.blocked_models_for_student(student_id)
+    if model in blocked_models:
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail(
+                "Model is blocked for this student.",
+                key_preview=key_preview,
+                model=model,
+                error_class="model_blocked",
+            ),
+        )
+
+    allowed_models = settings.allowed_models_for_student(student_id)
+    if allowed_models and model not in allowed_models:
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail(
+                "Model is not allowed for this student.",
+                key_preview=key_preview,
+                model=model,
+                allowed_models=sorted(allowed_models),
+                error_class="model_not_allowed",
             ),
         )
 
@@ -618,6 +655,12 @@ async def chat_completions(
 
         payload = await read_limited_json_body(request, settings, key_preview=key_preview)
         model = chat_model_from_payload(payload)
+        enforce_model_policy(
+            settings=settings,
+            student_id=student_id,
+            model=str(model),
+            key_preview=key_preview,
+        )
         if payload.get("stream") is True and not settings.allow_streaming:
             raise HTTPException(
                 status_code=400,

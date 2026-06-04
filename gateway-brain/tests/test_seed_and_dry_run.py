@@ -431,6 +431,127 @@ def test_high_speed_tier_comes_from_server_side_student_policy(tmp_path: Path) -
     assert limiter.tiers == ["high-speed"]
 
 
+def test_global_model_allowlist_blocks_unlisted_model_before_rate_limit_recording(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        poiesis_allowed_models="dry-run-minimax",
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "minimax-expensive",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    detail = response.json()["detail"]
+    assert detail["message"] == "Model is not allowed for this student."
+    assert detail["model"] == "minimax-expensive"
+    assert detail["allowed_models"] == ["dry-run-minimax"]
+    assert detail["key_preview"] == database.key_preview(ADA_KEY)
+    assert limiter.calls == 0
+
+
+def test_student_model_allowlist_overrides_global_allowlist(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        poiesis_allowed_models="dry-run-minimax,minimax-large",
+        poiesis_student_allowed_models=f"{ADA_STUDENT_ID}=dry-run-minimax",
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "minimax-large",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    detail = response.json()["detail"]
+    assert detail["message"] == "Model is not allowed for this student."
+    assert detail["model"] == "minimax-large"
+    assert detail["allowed_models"] == ["dry-run-minimax"]
+    assert limiter.calls == 0
+
+
+def test_student_model_blocklist_blocks_model_and_writes_audit_event(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        poiesis_student_blocked_models=f"{ADA_STUDENT_ID}=dry-run-minimax",
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    detail = response.json()["detail"]
+    assert detail["message"] == "Model is blocked for this student."
+    assert detail["model"] == "dry-run-minimax"
+    assert detail["error_class"] == "model_blocked"
+    assert limiter.calls == 0
+
+    events = database.list_audit_events(str(database_path), student_id=ADA_STUDENT_ID, limit=1)
+    assert len(events) == 1
+    assert events[0]["model"] == "dry-run-minimax"
+    assert events[0]["status_code"] == 403
+    assert events[0]["error_class"] == "model_blocked"
+    assert events[0]["token_delta"] == 0
+
+
 def test_dry_run_completion_that_crosses_ceiling_locks_future_requests(
     tmp_path: Path,
 ) -> None:

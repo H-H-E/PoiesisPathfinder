@@ -212,7 +212,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 ## Milestone 10: Future Enhancements
 
-- [ ] Add per-model policy controls.
+- [x] Add per-model policy controls.
   - Allow or block specific Minimax models per student.
 - [ ] Add monthly reset job.
   - Reset token totals on a defined billing boundary with audit history retained.

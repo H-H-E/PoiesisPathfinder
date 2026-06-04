@@ -69,6 +69,8 @@ Important variables:
 | `ALLOW_STREAMING` | Defaults to `false`; streaming is blocked because accounting needs the final `usage` block. |
 | `MAX_REQUEST_BODY_BYTES`, `MAX_MESSAGES`, `MAX_MESSAGE_CONTENT_CHARS`, `MAX_TOTAL_MESSAGE_CONTENT_CHARS` | Chat request guardrails applied before rate-limit recording. |
 | `DEFAULT_REQUEST_TIER`, `HIGH_SPEED_STUDENT_IDS` | Server-side tier policy. Student tier headers or payload fields are ignored. |
+| `POIESIS_ALLOWED_MODELS`, `POIESIS_BLOCKED_MODELS` | Optional comma-separated global model allow/block lists. Empty allowlist means all models are allowed unless blocked. |
+| `POIESIS_STUDENT_ALLOWED_MODELS`, `POIESIS_STUDENT_BLOCKED_MODELS` | Optional per-student model policy entries such as `stu-ada-lovelace=dry-run-minimax,minimax-text-01;stu-alan-turing=dry-run-minimax`. Student blocklists are added to global blocks; student allowlists narrow the global allowlist for that student. |
 | `GATEWAY_BRAIN_PORT`, `DASHBOARD_PORT`, `PORTKEY_PORT`, `REDIS_PORT` | Optional host port overrides for `docker compose` when the defaults are already in use. |
 
 ## Local Startup

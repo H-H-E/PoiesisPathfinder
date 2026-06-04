@@ -14,6 +14,10 @@ resets, locks, rotates, and recovers student keys for PoiesisPathfinder.
 - Student keys must start with `sk-poiesis-`; the Minimax master key must never
   be used as a student key.
 - Keep `ALLOW_INSECURE_ADMIN=false` outside isolated development.
+- Use `POIESIS_ALLOWED_MODELS`, `POIESIS_BLOCKED_MODELS`,
+  `POIESIS_STUDENT_ALLOWED_MODELS`, and `POIESIS_STUDENT_BLOCKED_MODELS` to
+  limit which models students can reach. A blocked model is rejected before
+  rate-limit recording or upstream forwarding.
 - Treat the dashboard as an operator console. Students should only receive
   their own bearer key and gateway base URL.
 
@@ -35,6 +39,7 @@ deployment rehearsal.
    POIESIS_KEY_HASH_SECRET=replace-with-a-long-random-stable-secret
    DRY_RUN_UPSTREAM=true
    ALLOW_INSECURE_ADMIN=false
+   POIESIS_ALLOWED_MODELS=dry-run-minimax
    ```
 
 3. Confirm Compose can parse the final configuration:
@@ -114,6 +119,7 @@ is intentionally scheduled.
    PORTKEY_BASE_URL=http://portkey:8787
    PORTKEY_PROVIDER=minimax
    PORTKEY_CONFIG=
+   POIESIS_ALLOWED_MODELS=dry-run-minimax,approved-minimax-model
    ```
 
 2. Start the stack:

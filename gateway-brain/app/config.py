@@ -5,6 +5,27 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _comma_set(raw: str) -> set[str]:
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def _student_model_map(raw: str) -> dict[str, set[str]]:
+    policy: dict[str, set[str]] = {}
+    for entry in raw.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        student_id, separator, model_list = entry.partition("=")
+        if not separator:
+            student_id, separator, model_list = entry.partition(":")
+        if not separator:
+            continue
+        models = _comma_set(model_list)
+        if student_id.strip() and models:
+            policy[student_id.strip()] = models
+    return policy
+
+
 class Settings(BaseSettings):
     database_path: str = "./data/database.db"
     redis_url: str = "redis://localhost:6379/0"
@@ -23,6 +44,10 @@ class Settings(BaseSettings):
     high_speed_window_limit: int = 321
     default_request_tier: Literal["standard", "high-speed"] = "standard"
     high_speed_student_ids: str = ""
+    poiesis_allowed_models: str = ""
+    poiesis_blocked_models: str = ""
+    poiesis_student_allowed_models: str = ""
+    poiesis_student_blocked_models: str = ""
 
     burst_window_seconds: int = 60
     standard_burst_limit: int = 2
@@ -73,6 +98,31 @@ class Settings(BaseSettings):
         if student_id in self.high_speed_student_id_set:
             return "high-speed"
         return self.default_request_tier
+
+    @property
+    def allowed_model_set(self) -> set[str]:
+        return _comma_set(self.poiesis_allowed_models)
+
+    @property
+    def blocked_model_set(self) -> set[str]:
+        return _comma_set(self.poiesis_blocked_models)
+
+    @property
+    def student_allowed_model_map(self) -> dict[str, set[str]]:
+        return _student_model_map(self.poiesis_student_allowed_models)
+
+    @property
+    def student_blocked_model_map(self) -> dict[str, set[str]]:
+        return _student_model_map(self.poiesis_student_blocked_models)
+
+    def allowed_models_for_student(self, student_id: str) -> set[str]:
+        student_allowed_models = self.student_allowed_model_map.get(student_id)
+        if student_allowed_models is not None:
+            return student_allowed_models
+        return self.allowed_model_set
+
+    def blocked_models_for_student(self, student_id: str) -> set[str]:
+        return self.blocked_model_set | self.student_blocked_model_map.get(student_id, set())
 
 
 @lru_cache
