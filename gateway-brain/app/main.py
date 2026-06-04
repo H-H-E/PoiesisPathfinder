@@ -109,18 +109,6 @@ def require_admin(
         raise HTTPException(status_code=401, detail="Missing or invalid admin token.")
 
 
-def infer_request_tier(request: Request, payload: dict[str, Any]) -> Literal["standard", "high-speed"]:
-    raw_tier = (
-        request.headers.get("x-poiesis-tier")
-        or request.headers.get("x-request-tier")
-        or str(payload.get("poiesis_tier", "standard"))
-    )
-    normalized = raw_tier.strip().lower().replace("_", "-")
-    if normalized in {"high-speed", "highspeed", "fast"}:
-        return "high-speed"
-    return "standard"
-
-
 def usage_total_tokens(payload: dict[str, Any]) -> int:
     usage = payload.get("usage")
     if not isinstance(usage, dict):
@@ -432,7 +420,7 @@ async def chat_completions(
             detail="Streaming is disabled because usage accounting requires the final OpenAI usage block.",
         )
 
-    tier = infer_request_tier(request, payload)
+    tier = settings.request_tier_for_student(student_id)
     payload = dict(payload)
     payload.pop("poiesis_tier", None)
 

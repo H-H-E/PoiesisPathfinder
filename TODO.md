@@ -79,7 +79,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [x] Block unsupported streaming by default.
   - Reason: post-response accounting needs a final `usage` block.
   - Acceptance: `stream: true` returns HTTP 400 unless streaming accounting is explicitly implemented.
-- [ ] Derive request tier from server-side policy.
+- [x] Derive request tier from server-side policy.
   - Acceptance: production mode does not trust student-provided tier headers or payload fields.
 - [ ] Add structured error payloads.
   - Include `message`, `key_preview`, `limit`, `remaining`, `reset_after_seconds`, and `scope` where applicable.

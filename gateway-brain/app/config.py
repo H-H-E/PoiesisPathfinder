@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,6 +21,8 @@ class Settings(BaseSettings):
     rate_window_seconds: int = 18_000
     standard_window_limit: int = 642
     high_speed_window_limit: int = 321
+    default_request_tier: Literal["standard", "high-speed"] = "standard"
+    high_speed_student_ids: str = ""
 
     burst_window_seconds: int = 60
     standard_burst_limit: int = 2
@@ -57,6 +60,19 @@ class Settings(BaseSettings):
         if tier == "high-speed":
             return self.high_speed_burst_limit
         return self.standard_burst_limit
+
+    @property
+    def high_speed_student_id_set(self) -> set[str]:
+        return {
+            student_id.strip()
+            for student_id in self.high_speed_student_ids.split(",")
+            if student_id.strip()
+        }
+
+    def request_tier_for_student(self, student_id: str) -> Literal["standard", "high-speed"]:
+        if student_id in self.high_speed_student_id_set:
+            return "high-speed"
+        return self.default_request_tier
 
 
 @lru_cache

@@ -23,6 +23,7 @@ class AllowingLimiter:
     def __init__(self) -> None:
         self.calls = 0
         self.identities: list[str] = []
+        self.tiers: list[str] = []
 
     async def check_and_record(
         self,
@@ -35,6 +36,7 @@ class AllowingLimiter:
     ) -> LimitStatus:
         self.calls += 1
         self.identities.append(identity)
+        self.tiers.append(tier)
         return LimitStatus(
             scope=scope,
             tier=tier,
@@ -58,6 +60,7 @@ class AllowingLimiter:
     ) -> tuple[LimitStatus, LimitStatus]:
         self.calls += 1
         self.identities.append(identity)
+        self.tiers.append(tier)
         return (
             LimitStatus(
                 scope="window",
@@ -255,6 +258,76 @@ def test_dry_run_chat_completion_is_openai_compatible_and_records_usage(
     assert "virtual_key" not in user
     assert "virtual_key_hash" not in user
     assert user["total_tokens_consumed"] == payload["usage"]["total_tokens"]
+
+
+def test_student_supplied_tier_hints_are_ignored(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ADA_KEY}",
+                "x-poiesis-tier": "high-speed",
+                "x-request-tier": "high-speed",
+            },
+            json={
+                "model": "dry-run-minimax",
+                "poiesis_tier": "high-speed",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert limiter.identities == [ADA_STUDENT_ID]
+    assert limiter.tiers == ["standard"]
+
+
+def test_high_speed_tier_comes_from_server_side_student_policy(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        high_speed_student_ids=f" {ADA_STUDENT_ID} ",
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert limiter.identities == [ADA_STUDENT_ID]
+    assert limiter.tiers == ["high-speed"]
 
 
 def test_dry_run_completion_that_crosses_ceiling_locks_future_requests(

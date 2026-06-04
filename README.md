@@ -65,6 +65,7 @@ Important variables:
 | `DRY_RUN_UPSTREAM` | `true` returns local OpenAI-shaped responses without contacting Portkey or Minimax. |
 | `ALLOW_STREAMING` | Defaults to `false`; streaming is blocked because accounting needs the final `usage` block. |
 | `MAX_REQUEST_BODY_BYTES`, `MAX_MESSAGES`, `MAX_MESSAGE_CONTENT_CHARS`, `MAX_TOTAL_MESSAGE_CONTENT_CHARS` | Chat request guardrails applied before rate-limit recording. |
+| `DEFAULT_REQUEST_TIER`, `HIGH_SPEED_STUDENT_IDS` | Server-side tier policy. Student tier headers or payload fields are ignored. |
 | `GATEWAY_BRAIN_PORT`, `DASHBOARD_PORT`, `PORTKEY_PORT`, `REDIS_PORT` | Optional host port overrides for `docker compose` when the defaults are already in use. |
 
 ## Local Startup
