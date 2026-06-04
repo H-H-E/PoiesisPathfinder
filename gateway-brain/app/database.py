@@ -43,6 +43,20 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_student_created ON audit_log(student_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_request_id ON audit_log(request_id);
+
+CREATE TABLE IF NOT EXISTS prompt_fingerprints (
+    student_id TEXT NOT NULL,
+    prompt_hash TEXT NOT NULL,
+    repeat_count INTEGER NOT NULL DEFAULT 1,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    last_request_id TEXT NOT NULL,
+    last_model TEXT,
+    PRIMARY KEY (student_id, prompt_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prompt_fingerprints_student_seen
+ON prompt_fingerprints(student_id, last_seen_at);
 """
 
 
@@ -455,6 +469,59 @@ def reset_monthly_token_totals(
             )
         connection.commit()
     return reset_rows
+
+
+def record_prompt_fingerprint(
+    database_path: str,
+    *,
+    student_id: str,
+    prompt_hash: str,
+    request_id: str,
+    model: str | None,
+) -> int:
+    now = utc_now()
+    with connect(database_path) as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        row = connection.execute(
+            """
+            SELECT repeat_count
+            FROM prompt_fingerprints
+            WHERE student_id = ? AND prompt_hash = ?
+            """,
+            (student_id, prompt_hash),
+        ).fetchone()
+        if row is None:
+            repeat_count = 1
+            connection.execute(
+                """
+                INSERT INTO prompt_fingerprints (
+                    student_id,
+                    prompt_hash,
+                    repeat_count,
+                    first_seen_at,
+                    last_seen_at,
+                    last_request_id,
+                    last_model
+                )
+                VALUES (?, ?, 1, ?, ?, ?, ?)
+                """,
+                (student_id, prompt_hash, now, now, request_id, model),
+            )
+        else:
+            repeat_count = int(row["repeat_count"]) + 1
+            connection.execute(
+                """
+                UPDATE prompt_fingerprints
+                SET repeat_count = ?,
+                    last_seen_at = ?,
+                    last_request_id = ?,
+                    last_model = ?
+                WHERE student_id = ? AND prompt_hash = ?
+                """,
+                (repeat_count, now, request_id, model, student_id, prompt_hash),
+            )
+        connection.commit()
+    return repeat_count
 
 
 def set_active(database_path: str, student_id: str, active: bool) -> None:

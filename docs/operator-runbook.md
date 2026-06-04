@@ -18,6 +18,9 @@ resets, locks, rotates, and recovers student keys for PoiesisPathfinder.
   `POIESIS_STUDENT_ALLOWED_MODELS`, and `POIESIS_STUDENT_BLOCKED_MODELS` to
   limit which models students can reach. A blocked model is rejected before
   rate-limit recording or upstream forwarding.
+- Leave `SEMANTIC_LOOP_DETECTION_ENABLED=true` to flag repeated identical
+  prompts from the same student in the audit feed. The gateway stores prompt
+  hashes and repeat counts, not raw prompt text.
 - Treat the dashboard as an operator console. Students should only receive
   their own bearer key and gateway base URL.
 
@@ -161,7 +164,8 @@ Keep these views open during a class session:
   ```
 
 Watch for fast burst depletion, repeated 429 responses, inactive students,
-403 monthly budget responses, and upstream 502/504 responses.
+403 monthly budget responses, `semantic_loop_detected` audit events, and
+upstream 502/504 responses.
 
 ## Dashboard Overrides
 
@@ -186,7 +190,8 @@ to the product UI.
 
 1. Lock the affected student in the dashboard.
 2. Confirm the audit feed shows repeated requests or 429 responses for that
-   `student_id`.
+   `student_id`. A `semantic_loop_detected` audit event means the same chat
+   message payload has repeated for that student.
 3. Ask the student to stop the client process and show the prompt/code path.
 4. Leave the key locked until the loop source is fixed.
 5. Reset windows only after the loop is stopped and you intentionally want the

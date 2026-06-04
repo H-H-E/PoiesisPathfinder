@@ -72,6 +72,7 @@ Important variables:
 | `DEFAULT_REQUEST_TIER`, `HIGH_SPEED_STUDENT_IDS` | Server-side tier policy. Student tier headers or payload fields are ignored. |
 | `POIESIS_ALLOWED_MODELS`, `POIESIS_BLOCKED_MODELS` | Optional comma-separated global model allow/block lists. Empty allowlist means all models are allowed unless blocked. |
 | `POIESIS_STUDENT_ALLOWED_MODELS`, `POIESIS_STUDENT_BLOCKED_MODELS` | Optional per-student model policy entries such as `stu-ada-lovelace=dry-run-minimax,minimax-text-01;stu-alan-turing=dry-run-minimax`. Student blocklists are added to global blocks; student allowlists narrow the global allowlist for that student. |
+| `SEMANTIC_LOOP_DETECTION_ENABLED`, `SEMANTIC_LOOP_REPEAT_THRESHOLD` | Optional repeated-prompt flagging. When enabled, repeated identical chat message payloads from the same student write a `semantic_loop_detected` audit event without storing raw prompt text. |
 | `GATEWAY_BRAIN_PORT`, `DASHBOARD_PORT`, `PORTKEY_PORT`, `REDIS_PORT` | Optional host port overrides for `docker compose` when the defaults are already in use. |
 
 ## Local Startup

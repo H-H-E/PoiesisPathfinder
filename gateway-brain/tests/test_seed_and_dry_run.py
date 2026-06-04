@@ -552,6 +552,68 @@ def test_student_model_blocklist_blocks_model_and_writes_audit_event(
     assert events[0]["token_delta"] == 0
 
 
+def test_repeated_identical_prompt_writes_semantic_loop_audit_without_raw_prompt(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        semantic_loop_repeat_threshold=2,
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        request_body = {
+            "model": "dry-run-minimax",
+            "messages": [{"role": "user", "content": "repeat this exact prompt"}],
+        }
+        first_response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}", "x-request-id": "req-repeat-0001"},
+            json=request_body,
+        )
+        second_response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}", "x-request-id": "req-repeat-0002"},
+            json=request_body,
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert limiter.calls == 2
+
+    events = database.list_audit_events(str(database_path), student_id=ADA_STUDENT_ID, limit=5)
+    loop_events = [event for event in events if event["error_class"] == "semantic_loop_detected"]
+    assert len(loop_events) == 1
+    assert loop_events[0]["request_id"] == "req-repeat-0002"
+    assert loop_events[0]["model"] == "dry-run-minimax"
+    assert loop_events[0]["token_delta"] == 0
+
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT prompt_hash, repeat_count, last_request_id
+            FROM prompt_fingerprints
+            WHERE student_id = ?
+            """,
+            (ADA_STUDENT_ID,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][1] == 2
+    assert rows[0][2] == "req-repeat-0002"
+    assert "repeat this exact prompt" not in rows[0][0]
+
+
 def test_dry_run_completion_that_crosses_ceiling_locks_future_requests(
     tmp_path: Path,
 ) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -395,6 +396,50 @@ def enforce_model_policy(
         )
 
 
+def prompt_fingerprint(payload: dict[str, Any]) -> str:
+    prompt_material = json.dumps(
+        payload.get("messages", []),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(prompt_material.encode("utf-8")).hexdigest()
+
+
+def record_semantic_loop_signal(
+    settings: Settings,
+    *,
+    request_id: str,
+    student_id: str,
+    key_preview: str,
+    model: str | None,
+    payload: dict[str, Any],
+) -> None:
+    if not settings.semantic_loop_detection_enabled:
+        return
+    threshold = max(settings.semantic_loop_repeat_threshold, 2)
+    repeat_count = database.record_prompt_fingerprint(
+        settings.database_path,
+        student_id=student_id,
+        prompt_hash=prompt_fingerprint(payload),
+        request_id=request_id,
+        model=model,
+    )
+    if repeat_count < threshold:
+        return
+    record_audit_event_safe(
+        settings,
+        request_id=request_id,
+        student_id=student_id,
+        key_preview=key_preview,
+        token_delta=0,
+        route=CHAT_COMPLETIONS_ROUTE,
+        model=model,
+        status_code=200,
+        error_class="semantic_loop_detected",
+    )
+
+
 def chat_content_size(content: Any, message_index: int, *, key_preview: str | None = None) -> int:
     if content is None:
         return 0
@@ -680,6 +725,14 @@ async def chat_completions(
             identity=student_id,
             key_preview=key_preview,
             tier=tier,
+        )
+        record_semantic_loop_signal(
+            settings,
+            request_id=request_id,
+            student_id=student_id,
+            key_preview=key_preview,
+            model=model,
+            payload=payload,
         )
 
         if settings.dry_run_upstream:

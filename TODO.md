@@ -218,7 +218,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Reset token totals on a defined billing boundary with audit history retained.
 - [x] Add request body size limits.
   - Prevent accidental giant context submissions.
-- [ ] Add semantic loop detection.
+- [x] Add semantic loop detection.
   - Flag repeated identical prompts from the same student.
 - [ ] Add Prometheus-style metrics.
   - Export request counts, blocks, token spend, upstream latency, and error rates.

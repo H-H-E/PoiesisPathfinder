@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     poiesis_blocked_models: str = ""
     poiesis_student_allowed_models: str = ""
     poiesis_student_blocked_models: str = ""
+    semantic_loop_detection_enabled: bool = True
+    semantic_loop_repeat_threshold: int = 2
 
     burst_window_seconds: int = 60
     standard_burst_limit: int = 2
