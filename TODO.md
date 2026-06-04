@@ -4,17 +4,27 @@ This backlog expands the PRD into buildable slices for a local AI governance gat
 
 Hermes client -> FastAPI governance brain -> Portkey sidecar -> Minimax API.
 
+## Release Gates Before Real Minimax Traffic
+
+- [ ] **Gate A - Dry-run local system:** compose starts, seed job runs, dashboard loads, dry-run chat succeeds, and spam curl blocks locally without contacting Minimax.
+- [ ] **Gate B - Security baseline:** admin auth fails closed, raw virtual keys are not exposed outside FastAPI, Redis keys do not contain usable secrets, and every request receives a correlation ID.
+- [ ] **Gate C - Quota integrity:** burst and five-hour windows are checked atomically, missing usage is handled by policy, concurrent requests cannot race past quota, and monthly cap crossing locks the key immediately.
+- [ ] **Gate D - Real Portkey/Minimax probe:** one controlled non-dry-run request proves Portkey provider configuration, `usage` shape, token accounting, and upstream error handling.
+- [ ] **Gate E - Operator runbook:** a coding-club operator can start, verify, monitor, reset, lock, rotate, and recover keys from documented procedures.
+
+See `reports/engineering-hardening-plan.md` for the compound engineering review behind these gates.
+
 ## Milestone 0: Repo Readiness
 
-- [ ] Confirm repository ownership and remote target.
+- [x] Confirm repository ownership and remote target.
   - Acceptance: `git remote -v` points at the intended GitHub repository.
   - Acceptance: `main` can be pushed and cloned by collaborators.
-- [ ] Add a contributor-safe `.env.example`.
+- [x] Add a contributor-safe `.env.example`.
   - Include `MINIMAX_API_KEY`, `PORTKEY_PROVIDER`, `PORTKEY_CONFIG`, `POIESIS_ADMIN_TOKEN`, `DRY_RUN_UPSTREAM`, and dashboard/backend URLs.
   - Do not commit real API keys.
 - [ ] Add a root `README.md`.
   - Explain the network flow, local startup, dry-run mode, real Minimax mode, dashboard access, and troubleshooting.
-- [ ] Add `.gitignore`.
+- [x] Add `.gitignore`.
   - Ignore SQLite files, Redis dumps, Python caches, `node_modules`, Next build output, and local env files.
 
 ## Milestone 1: Docker Orchestration
@@ -45,19 +55,32 @@ Hermes client -> FastAPI governance brain -> Portkey sidecar -> Minimax API.
 
 ## Milestone 3: FastAPI Governance Brain
 
+- [ ] Fail closed when admin auth is not configured.
+  - Acceptance: admin routes are protected unless an explicit insecure-development flag is set.
 - [ ] Harden pre-flight authentication.
   - Verify `Authorization: Bearer sk-poiesis-...`.
   - Reject missing, malformed, unknown, or inactive keys with HTTP 401.
   - Acceptance: no student key is forwarded to Portkey.
+- [ ] Replace raw virtual-key identifiers with production-safe identities.
+  - Add stable `student_id`.
+  - Store an HMAC or salted hash of each virtual key.
+  - Return only `student_id` and key preview to the dashboard.
+  - Acceptance: raw virtual keys do not appear in dashboard JSON, Redis keys, URLs, or logs.
 - [ ] Enforce monthly token ceiling.
   - Ceiling: `185,700,000` tokens per user.
   - Acceptance: when a user reaches the ceiling, `is_active` flips false and future requests return HTTP 403.
+- [ ] Deactivate immediately when a successful response crosses the monthly ceiling.
+  - Acceptance: post-hook token increment and cap lockout happen in one SQLite transaction.
 - [ ] Preserve the OpenAI-compatible request path.
   - Endpoint: `POST /v1/chat/completions`.
   - Acceptance: Hermes can use the gateway as an OpenAI-compatible base URL.
+- [ ] Add request body and message-shape limits.
+  - Acceptance: oversized or malformed chat payloads are rejected before rate-limit recording.
 - [ ] Block unsupported streaming by default.
   - Reason: post-response accounting needs a final `usage` block.
   - Acceptance: `stream: true` returns HTTP 400 unless streaming accounting is explicitly implemented.
+- [ ] Derive request tier from server-side policy.
+  - Acceptance: production mode does not trust student-provided tier headers or payload fields.
 - [ ] Add structured error payloads.
   - Include `message`, `student_key_preview`, `limit`, `remaining`, `reset_after_seconds`, and `scope` where applicable.
 - [ ] Add request correlation IDs.
@@ -65,6 +88,8 @@ Hermes client -> FastAPI governance brain -> Portkey sidecar -> Minimax API.
 
 ## Milestone 4: Redis Sliding Window Limits
 
+- [ ] Replace two-step limiter recording with an atomic multi-window operation.
+  - Acceptance: five-hour and burst windows are both checked first, then both recorded only if both pass.
 - [ ] Enforce the standard five-hour window.
   - Limit: `642` requests per `18,000` seconds per user.
   - Acceptance: the 643rd request in the window returns HTTP 429.
@@ -79,6 +104,8 @@ Hermes client -> FastAPI governance brain -> Portkey sidecar -> Minimax API.
   - Acceptance: concurrent requests cannot race past the quota.
 - [ ] Add Redis key expiration.
   - Acceptance: idle user rate-limit keys disappear after the rolling window plus cleanup buffer.
+- [ ] Fail closed on Redis unavailability.
+  - Acceptance: Redis connection errors return HTTP 503 and do not forward to Portkey.
 - [ ] Add admin reset endpoints.
   - Reset standard window, high-speed window, or all windows for one student.
 
@@ -94,6 +121,7 @@ Hermes client -> FastAPI governance brain -> Portkey sidecar -> Minimax API.
   - Acceptance: upstream only sees the master Minimax/Portkey credential.
 - [ ] Add Portkey metadata.
   - Include student name, key preview, request tier, and request correlation ID.
+  - Hardened target: prefer pseudonymous student IDs over student names.
 - [ ] Confirm retries do not double-count tokens.
   - Acceptance: token accounting happens once from the final successful OpenAI-style response.
 - [ ] Add timeout and upstream error handling.
@@ -104,6 +132,9 @@ Hermes client -> FastAPI governance brain -> Portkey sidecar -> Minimax API.
 - [ ] Parse OpenAI-style `usage`.
   - Fields: `prompt_tokens`, `completion_tokens`, and `total_tokens`.
   - Acceptance: `total_tokens_consumed` increases by the response usage total.
+- [ ] Add a missing-usage policy.
+  - Default real-upstream policy: reject or quarantine successful responses without usable usage.
+  - Acceptance: missing usage cannot silently bypass monthly budgets.
 - [ ] Make SQLite increments atomic.
   - Acceptance: concurrent successful responses do not lose updates.
 - [ ] Add admin token adjustments.
