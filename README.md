@@ -225,6 +225,9 @@ dashboard server so `POIESIS_ADMIN_TOKEN` stays server-side.
 Admin and dashboard surfaces identify students with stable `student_id` values
 and short `key_preview` strings. They do not expose raw student bearer keys in
 dashboard JSON, URLs, Redis rate-limit identities, or forwarding metadata.
+Chat requests return an `x-request-id` response header. Operators may supply a
+safe `x-request-id` or `x-correlation-id`; otherwise FastAPI generates one and
+uses it in logs and Portkey metadata.
 
 FastAPI admin routes fail closed when `POIESIS_ADMIN_TOKEN` is missing. The only
 way to run admin routes without a token is to set `ALLOW_INSECURE_ADMIN=true`,

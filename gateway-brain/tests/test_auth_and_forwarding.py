@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -226,6 +227,7 @@ def test_forward_to_portkey_uses_master_credential_not_student_key(
     student_key = "sk-poiesis-grace-11b09e4c"
     student_id = "stu-grace-hopper"
     key_preview = database.key_preview(student_key)
+    request_id = "req-direct-forward-0001"
 
     response = asyncio.run(
         forward_to_portkey(
@@ -233,6 +235,7 @@ def test_forward_to_portkey_uses_master_credential_not_student_key(
             settings=settings,
             student_id=student_id,
             key_preview=key_preview,
+            request_id=request_id,
             tier="standard",
         )
     )
@@ -245,8 +248,81 @@ def test_forward_to_portkey_uses_master_credential_not_student_key(
     assert metadata == {
         "student_id": student_id,
         "key_preview": key_preview,
+        "request_id": request_id,
         "tier": "standard",
     }
     assert "virtual_key" not in metadata
     assert "virtual_key_hash" not in metadata
     assert student_key not in json.dumps(captured["headers"])
+
+
+def test_chat_forwarding_threads_request_id_to_logs_headers_and_portkey(
+    tmp_path: Path,
+    monkeypatch: Any,
+    caplog: Any,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            captured["timeout"] = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def post(
+            self,
+            target: str,
+            *,
+            headers: dict[str, str],
+            json: dict[str, Any],
+        ) -> httpx.Response:
+            captured["target"] = target
+            captured["headers"] = headers
+            captured["payload"] = json
+            return httpx.Response(200, json={"usage": {"total_tokens": 3}})
+
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=False,
+        portkey_base_url="http://portkey:8787",
+        portkey_provider="minimax",
+        PORTKEY_UPSTREAM_API_KEY="master-secret",
+        poiesis_admin_token="admin-token",
+    )
+    request_id = "req-route-forward-0001"
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", FakeAsyncClient)
+    caplog.set_level(logging.INFO, logger="poiesis.gateway")
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: AllowingLimiter()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ADA_KEY}",
+                "x-request-id": request_id,
+            },
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == request_id
+    metadata = json.loads(captured["headers"]["x-portkey-metadata"])
+    assert metadata["request_id"] == request_id
+    assert metadata["student_id"] == ADA_STUDENT_ID
+    assert request_id in caplog.text
+    assert ADA_STUDENT_ID in caplog.text

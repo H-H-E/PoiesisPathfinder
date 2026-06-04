@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -22,6 +24,8 @@ from app.limiter import LimitStatus, SlidingWindowLimiter
 
 STUDENT_KEY_PREFIX = "sk-poiesis-"
 VALID_CHAT_ROLES = {"system", "user", "assistant", "tool"}
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{8,128}$")
+logger = logging.getLogger("poiesis.gateway")
 
 
 class ResetWindowPayload(BaseModel):
@@ -93,12 +97,25 @@ def normalize_error_detail(detail: Any) -> dict[str, Any]:
     return error_detail(str(detail))
 
 
+def request_id_from_headers(request: Request) -> str:
+    for header_name in ("x-request-id", "x-correlation-id"):
+        raw_request_id = request.headers.get(header_name)
+        if raw_request_id:
+            request_id = raw_request_id.strip()
+            if REQUEST_ID_PATTERN.fullmatch(request_id):
+                return request_id
+    return f"req-{uuid.uuid4().hex}"
+
+
 @app.exception_handler(HTTPException)
 async def structured_http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    headers = dict(exc.headers or {})
+    if hasattr(request.state, "request_id"):
+        headers.setdefault("x-request-id", request.state.request_id)
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": normalize_error_detail(exc.detail)},
-        headers=exc.headers,
+        headers=headers,
     )
 
 
@@ -384,6 +401,7 @@ async def forward_to_portkey(
     settings: Settings,
     student_id: str,
     key_preview: str,
+    request_id: str,
     tier: str,
 ) -> httpx.Response:
     if not settings.portkey_upstream_api_key:
@@ -403,6 +421,7 @@ async def forward_to_portkey(
             {
                 "student_id": student_id,
                 "key_preview": key_preview,
+                "request_id": request_id,
                 "tier": tier,
             },
             separators=(",", ":"),
@@ -488,6 +507,8 @@ async def chat_completions(
     settings: Settings = Depends(get_app_settings),
     limiter: SlidingWindowLimiter = Depends(limiter_from_state),
 ) -> Response:
+    request_id = request_id_from_headers(request)
+    request.state.request_id = request_id
     virtual_key = parse_bearer_token(authorization)
     user = database.get_user_by_virtual_key(
         settings.database_path,
@@ -499,6 +520,12 @@ async def chat_completions(
 
     student_id = str(user["student_id"])
     key_preview = str(user["key_preview"])
+    logger.info(
+        "chat request accepted request_id=%s student_id=%s key_preview=%s",
+        request_id,
+        student_id,
+        key_preview,
+    )
     if not user["is_active"]:
         if int(user["total_tokens_consumed"]) >= settings.monthly_token_ceiling:
             raise HTTPException(
@@ -548,13 +575,19 @@ async def chat_completions(
                 token_delta,
                 settings.monthly_token_ceiling,
             )
-        return JSONResponse(response_payload)
+        logger.info(
+            "chat request completed request_id=%s student_id=%s status_code=200 dry_run=true",
+            request_id,
+            student_id,
+        )
+        return JSONResponse(response_payload, headers={"x-request-id": request_id})
 
     upstream_response = await forward_to_portkey(
         payload=payload,
         settings=settings,
         student_id=student_id,
         key_preview=key_preview,
+        request_id=request_id,
         tier=tier,
     )
 
@@ -573,10 +606,17 @@ async def chat_completions(
                 settings.monthly_token_ceiling,
             )
 
+    logger.info(
+        "chat request completed request_id=%s student_id=%s status_code=%s dry_run=false",
+        request_id,
+        student_id,
+        upstream_response.status_code,
+    )
     return Response(
         content=upstream_response.content,
         status_code=upstream_response.status_code,
         media_type=content_type,
+        headers={"x-request-id": request_id},
     )
 
 

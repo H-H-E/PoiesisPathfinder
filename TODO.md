@@ -83,7 +83,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Acceptance: production mode does not trust student-provided tier headers or payload fields.
 - [x] Add structured error payloads.
   - Include `message`, `key_preview`, `limit`, `remaining`, `reset_after_seconds`, and `scope` where applicable.
-- [ ] Add request correlation IDs.
+- [x] Add request correlation IDs.
   - Acceptance: each proxied request has a log-visible ID shared across FastAPI logs and Portkey metadata.
 
 ## Milestone 4: Redis Sliding Window Limits
@@ -119,7 +119,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Option B: `x-portkey-config` with provider and retry settings.
 - [ ] Strip student credentials before forwarding.
   - Acceptance: upstream only sees the master Minimax/Portkey credential.
-- [ ] Add Portkey metadata.
+- [x] Add Portkey metadata.
   - Include `student_id`, `key_preview`, request tier, and request correlation ID.
   - Hardened target: avoid raw keys and student names in upstream metadata.
 - [ ] Confirm retries do not double-count tokens.
