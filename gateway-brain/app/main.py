@@ -21,6 +21,7 @@ from app.limiter import LimitStatus, SlidingWindowLimiter
 
 
 STUDENT_KEY_PREFIX = "sk-poiesis-"
+VALID_CHAT_ROLES = {"system", "user", "assistant", "tool"}
 
 
 class ResetWindowPayload(BaseModel):
@@ -131,6 +132,96 @@ def usage_total_tokens(payload: dict[str, Any]) -> int:
     if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
         return 0
     return max(prompt_tokens + completion_tokens, 0)
+
+
+async def read_limited_json_body(request: Request, settings: Settings) -> dict[str, Any]:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared_size = int(content_length)
+        except ValueError:
+            declared_size = 0
+        if declared_size > settings.max_request_body_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Request body exceeds {settings.max_request_body_bytes} bytes.",
+            )
+
+    body = await request.body()
+    if len(body) > settings.max_request_body_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Request body exceeds {settings.max_request_body_bytes} bytes.",
+        )
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object.")
+    validate_chat_payload(payload, settings)
+    return payload
+
+
+def validate_chat_payload(payload: dict[str, Any], settings: Settings) -> None:
+    model = payload.get("model")
+    if not isinstance(model, str) or not model.strip():
+        raise HTTPException(status_code=400, detail="Request body must include a non-empty string model.")
+
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise HTTPException(status_code=400, detail="Request body must include a non-empty messages list.")
+    if len(messages) > settings.max_messages:
+        raise HTTPException(
+            status_code=413,
+            detail=f"messages exceeds the limit of {settings.max_messages}.",
+        )
+
+    total_content_chars = 0
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            raise HTTPException(status_code=400, detail=f"messages[{index}] must be an object.")
+
+        role = message.get("role")
+        if not isinstance(role, str) or role not in VALID_CHAT_ROLES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"messages[{index}].role must be one of: assistant, system, tool, user.",
+            )
+
+        content = message.get("content")
+        content_chars = chat_content_size(content, index)
+        if content_chars > settings.max_message_content_chars:
+            raise HTTPException(
+                status_code=413,
+                detail=f"messages[{index}].content exceeds {settings.max_message_content_chars} characters.",
+            )
+        total_content_chars += content_chars
+
+    if total_content_chars > settings.max_total_message_content_chars:
+        raise HTTPException(
+            status_code=413,
+            detail=f"messages content exceeds {settings.max_total_message_content_chars} total characters.",
+        )
+
+
+def chat_content_size(content: Any, message_index: int) -> int:
+    if content is None:
+        return 0
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        for part_index, part in enumerate(content):
+            if not isinstance(part, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"messages[{message_index}].content[{part_index}] must be an object.",
+                )
+        return len(json.dumps(content, separators=(",", ":"), ensure_ascii=False))
+    raise HTTPException(
+        status_code=400,
+        detail=f"messages[{message_index}].content must be a string, list, or null.",
+    )
 
 
 def estimate_prompt_tokens(payload: dict[str, Any]) -> int:
@@ -334,13 +425,7 @@ async def chat_completions(
     if database.deactivate_if_spent(settings.database_path, student_id, settings.monthly_token_ceiling):
         raise HTTPException(status_code=403, detail="Monthly token budget spent.")
 
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Request body must be valid JSON.") from exc
-
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Request body must be a JSON object.")
+    payload = await read_limited_json_body(request, settings)
     if payload.get("stream") is True and not settings.allow_streaming:
         raise HTTPException(
             status_code=400,

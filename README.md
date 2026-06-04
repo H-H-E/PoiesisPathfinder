@@ -64,6 +64,7 @@ Important variables:
 | `ALLOW_INSECURE_ADMIN` | Explicit development-only escape hatch. Leave `false` for shared or production-like environments. |
 | `DRY_RUN_UPSTREAM` | `true` returns local OpenAI-shaped responses without contacting Portkey or Minimax. |
 | `ALLOW_STREAMING` | Defaults to `false`; streaming is blocked because accounting needs the final `usage` block. |
+| `MAX_REQUEST_BODY_BYTES`, `MAX_MESSAGES`, `MAX_MESSAGE_CONTENT_CHARS`, `MAX_TOTAL_MESSAGE_CONTENT_CHARS` | Chat request guardrails applied before rate-limit recording. |
 | `GATEWAY_BRAIN_PORT`, `DASHBOARD_PORT`, `PORTKEY_PORT`, `REDIS_PORT` | Optional host port overrides for `docker compose` when the defaults are already in use. |
 
 ## Local Startup

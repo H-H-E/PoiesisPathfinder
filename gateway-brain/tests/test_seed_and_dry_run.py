@@ -338,3 +338,100 @@ def test_streaming_is_rejected_before_rate_limit_recording(tmp_path: Path) -> No
     assert response.status_code == 400
     assert "Streaming is disabled" in response.json()["detail"]
     assert limiter.calls == 0
+
+
+def test_malformed_messages_are_rejected_before_rate_limit_recording(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={"model": "dry-run-minimax", "messages": "hello"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 400
+    assert "messages list" in response.json()["detail"]
+    assert limiter.calls == 0
+
+
+def test_oversized_request_body_is_rejected_before_rate_limit_recording(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        max_request_body_bytes=120,
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "x" * 200}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 413
+    assert "Request body exceeds" in response.json()["detail"]
+    assert limiter.calls == 0
+
+
+def test_oversized_message_content_is_rejected_before_rate_limit_recording(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        max_message_content_chars=4,
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 413
+    assert "content exceeds" in response.json()["detail"]
+    assert limiter.calls == 0

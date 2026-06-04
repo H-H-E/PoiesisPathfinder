@@ -27,6 +27,10 @@ class Settings(BaseSettings):
 
     dry_run_upstream: bool = False
     allow_streaming: bool = False
+    max_request_body_bytes: int = 262_144
+    max_messages: int = 64
+    max_message_content_chars: int = 16_000
+    max_total_message_content_chars: int = 64_000
     http_timeout_seconds: float = 120.0
     cors_origins: str = "http://localhost:3000"
     poiesis_admin_token: str | None = None

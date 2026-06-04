@@ -74,7 +74,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [x] Preserve the OpenAI-compatible request path.
   - Endpoint: `POST /v1/chat/completions`.
   - Acceptance: Hermes can use the gateway as an OpenAI-compatible base URL.
-- [ ] Add request body and message-shape limits.
+- [x] Add request body and message-shape limits.
   - Acceptance: oversized or malformed chat payloads are rejected before rate-limit recording.
 - [x] Block unsupported streaming by default.
   - Reason: post-response accounting needs a final `usage` block.
@@ -216,7 +216,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Allow or block specific Minimax models per student.
 - [ ] Add monthly reset job.
   - Reset token totals on a defined billing boundary with audit history retained.
-- [ ] Add request body size limits.
+- [x] Add request body size limits.
   - Prevent accidental giant context submissions.
 - [ ] Add semantic loop detection.
   - Flag repeated identical prompts from the same student.
