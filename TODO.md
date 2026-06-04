@@ -129,10 +129,10 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 ## Milestone 6: Token Accounting
 
-- [ ] Parse OpenAI-style `usage`.
+- [x] Parse OpenAI-style `usage`.
   - Fields: `prompt_tokens`, `completion_tokens`, and `total_tokens`.
   - Acceptance: `total_tokens_consumed` increases by the response usage total.
-- [ ] Add a missing-usage policy.
+- [x] Add a missing-usage policy.
   - Default real-upstream policy: reject or quarantine successful responses without usable usage.
   - Acceptance: missing usage cannot silently bypass monthly budgets.
 - [ ] Make SQLite increments atomic.

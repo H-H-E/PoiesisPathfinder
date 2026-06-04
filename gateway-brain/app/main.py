@@ -153,17 +153,24 @@ def require_admin(
         raise HTTPException(status_code=401, detail=error_detail("Missing or invalid admin token."))
 
 
-def usage_total_tokens(payload: dict[str, Any]) -> int:
+def parse_usage_total_tokens(payload: dict[str, Any]) -> int | None:
     usage = payload.get("usage")
     if not isinstance(usage, dict):
-        return 0
+        return None
     if isinstance(usage.get("total_tokens"), int):
         return max(int(usage["total_tokens"]), 0)
-    prompt_tokens = usage.get("prompt_tokens", 0)
-    completion_tokens = usage.get("completion_tokens", 0)
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
     if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
-        return 0
+        return None
     return max(prompt_tokens + completion_tokens, 0)
+
+
+def usage_total_tokens(payload: dict[str, Any]) -> int:
+    token_total = parse_usage_total_tokens(payload)
+    if token_total is None:
+        return 0
+    return token_total
 
 
 async def read_limited_json_body(
@@ -622,12 +629,37 @@ async def chat_completions(
         ) from exc
 
     content_type = upstream_response.headers.get("content-type", "application/json")
-    if upstream_response.status_code < 400 and "application/json" in content_type:
+    if upstream_response.status_code < 400:
+        if "application/json" not in content_type:
+            raise HTTPException(
+                status_code=502,
+                detail=error_detail(
+                    "Upstream response did not include usable usage; token usage was not updated.",
+                    key_preview=key_preview,
+                    error_class="missing_usage",
+                ),
+            )
         try:
             response_payload = upstream_response.json()
-        except json.JSONDecodeError:
-            response_payload = {}
-        token_delta = usage_total_tokens(response_payload)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=error_detail(
+                    "Upstream response did not include usable usage; token usage was not updated.",
+                    key_preview=key_preview,
+                    error_class="missing_usage",
+                ),
+            ) from exc
+        token_delta = parse_usage_total_tokens(response_payload)
+        if token_delta is None:
+            raise HTTPException(
+                status_code=502,
+                detail=error_detail(
+                    "Upstream response did not include usable usage; token usage was not updated.",
+                    key_preview=key_preview,
+                    error_class="missing_usage",
+                ),
+            )
         if token_delta:
             database.record_token_usage(
                 settings.database_path,

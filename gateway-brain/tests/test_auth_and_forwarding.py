@@ -434,6 +434,162 @@ def test_chat_forwarding_threads_request_id_to_logs_headers_and_portkey(
     assert user["total_tokens_consumed"] == 3
 
 
+def test_chat_forwarding_records_prompt_and_completion_usage_once(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    class UsageAsyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> UsageAsyncClient:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def post(
+            self,
+            target: str,
+            *,
+            headers: dict[str, str],
+            json: dict[str, Any],
+        ) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl-usage",
+                    "object": "chat.completion",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 4,
+                        "completion_tokens": 6,
+                    },
+                },
+            )
+
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=False,
+        portkey_base_url="http://portkey:8787",
+        portkey_provider="minimax",
+        PORTKEY_UPSTREAM_API_KEY="master-secret",
+        poiesis_admin_token="admin-token",
+    )
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", UsageAsyncClient)
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: AllowingLimiter()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == 10
+
+
+def test_chat_forwarding_missing_usage_returns_502_without_token_update(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    class MissingUsageAsyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> MissingUsageAsyncClient:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def post(
+            self,
+            target: str,
+            *,
+            headers: dict[str, str],
+            json: dict[str, Any],
+        ) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl-missing-usage",
+                    "object": "chat.completion",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                },
+            )
+
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=False,
+        portkey_base_url="http://portkey:8787",
+        portkey_provider="minimax",
+        PORTKEY_UPSTREAM_API_KEY="master-secret",
+        poiesis_admin_token="admin-token",
+    )
+    request_id = "req-missing-usage-0001"
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", MissingUsageAsyncClient)
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: AllowingLimiter()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ADA_KEY}",
+                "x-request-id": request_id,
+            },
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 502
+    assert response.headers["x-request-id"] == request_id
+    detail = response.json()["detail"]
+    assert detail["message"] == "Upstream response did not include usable usage; token usage was not updated."
+    assert detail["key_preview"] == database.key_preview(ADA_KEY)
+    assert detail["error_class"] == "missing_usage"
+
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == 0
+
+
 def test_chat_forwarding_timeout_returns_504_without_token_update(
     tmp_path: Path,
     monkeypatch: Any,
