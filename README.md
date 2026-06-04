@@ -216,6 +216,24 @@ PoiesisPathfinder dry-run response and whose `usage.total_tokens` is present.
 The standard tier has a short burst limit of 2 requests per 60 seconds. A third
 quick request with the same key should return HTTP 429.
 
+For repeatable local verification, run the spam helper from the repository
+root. It sends OpenAI-compatible chat requests and exits non-zero unless at
+least one request is blocked with HTTP 429:
+
+```bash
+python3 scripts/spam_test.py \
+  --base-url http://localhost:8000 \
+  --virtual-key sk-poiesis-ada-7f3c9d2a \
+  --count 3 \
+  --tier standard \
+  --delay 0
+```
+
+Expected result: the first two standard-tier dry-run requests return HTTP 200,
+and the third returns HTTP 429 with `scope=burst`. The script accepts
+`--tier high-speed` for local experiments, but production request tiers are
+still derived server-side by FastAPI.
+
 ## Real Minimax Mode
 
 Real upstream traffic requires external credentials and should only be enabled

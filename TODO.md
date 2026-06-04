@@ -165,9 +165,9 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 ## Milestone 8: Verification and Safety Tests
 
-- [ ] Add local dry-run verification commands.
+- [x] Add local dry-run verification commands.
   - Acceptance: curl can demonstrate success and rate-limit block without contacting Minimax.
-- [ ] Add spam test script.
+- [x] Add spam test script.
   - Inputs: virtual key, count, tier, delay.
   - Acceptance: standard tier blocks on the third request within 60 seconds.
 - [ ] Add pytest coverage for backend logic.
