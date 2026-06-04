@@ -118,6 +118,42 @@ class ResetRecordingLimiter(AllowingLimiter):
         return 1
 
 
+class BlockingLimiter(AllowingLimiter):
+    async def check_and_record_window_and_burst(
+        self,
+        *,
+        identity: str,
+        tier: str,
+        window_seconds: int,
+        window_limit: int,
+        burst_seconds: int,
+        burst_limit: int,
+    ) -> tuple[LimitStatus, LimitStatus]:
+        self.identities.append(identity)
+        return (
+            LimitStatus(
+                scope="window",
+                tier=tier,
+                allowed=False,
+                count=window_limit,
+                limit=window_limit,
+                remaining=0,
+                reset_after_seconds=42,
+                window_seconds=window_seconds,
+            ),
+            LimitStatus(
+                scope="burst",
+                tier=tier,
+                allowed=True,
+                count=0,
+                limit=burst_limit,
+                remaining=burst_limit,
+                reset_after_seconds=0,
+                window_seconds=burst_seconds,
+            ),
+        )
+
+
 def _client_for_database(
     database_path: Path,
     limiter: AllowingLimiter | None = None,
@@ -328,6 +364,25 @@ def test_admin_adjust_tokens_applies_positive_and_negative_deltas(
     assert user is not None
     assert user["total_tokens_consumed"] == 85
 
+    try:
+        client = _client_for_database(database_path)
+        audit_response = client.get(
+            f"/admin/audit-log?student_id={ADA_STUDENT_ID}&limit=2",
+            headers={"x-admin-token": "admin-token"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert audit_response.status_code == 200
+    events = audit_response.json()["events"]
+    assert [event["token_delta"] for event in events] == [-40, 25]
+    assert {event["route"] for event in events} == {
+        f"/admin/users/{ADA_STUDENT_ID}/adjust-tokens"
+    }
+    assert all(event["status_code"] == 200 for event in events)
+    assert all(event["student_id"] == ADA_STUDENT_ID for event in events)
+    assert all(event["key_preview"] == database.key_preview(ADA_KEY) for event in events)
+
 
 def test_admin_adjust_tokens_clamps_negative_totals_at_zero(
     tmp_path: Path,
@@ -375,6 +430,91 @@ def test_admin_adjust_tokens_rejects_unknown_student_without_adjustment(
 
     assert response.status_code == 404
     assert response.json()["detail"]["message"] == "Unknown student ID."
+
+
+def test_successful_dry_run_chat_is_written_to_audit_log(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    request_id = "req-audit-success-0001"
+
+    try:
+        client = _client_for_database(database_path)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ADA_KEY}",
+                "x-request-id": request_id,
+            },
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        audit_response = client.get(
+            f"/admin/audit-log?student_id={ADA_STUDENT_ID}&limit=1",
+            headers={"x-admin-token": "admin-token"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    token_delta = response.json()["usage"]["total_tokens"]
+    assert audit_response.status_code == 200
+    events = audit_response.json()["events"]
+    assert len(events) == 1
+    event = events[0]
+    assert event["request_id"] == request_id
+    assert event["student_id"] == ADA_STUDENT_ID
+    assert event["key_preview"] == database.key_preview(ADA_KEY)
+    assert event["token_delta"] == token_delta
+    assert event["route"] == "/v1/chat/completions"
+    assert event["model"] == "dry-run-minimax"
+    assert event["status_code"] == 200
+    assert event["error_class"] is None
+    assert ADA_KEY not in json.dumps(event)
+
+
+def test_rate_limit_rejection_is_written_to_audit_log(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    request_id = "req-audit-rate-limit-0001"
+    limiter = BlockingLimiter()
+
+    try:
+        client = _client_for_database(database_path, limiter)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ADA_KEY}",
+                "x-request-id": request_id,
+            },
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        audit_response = client.get(
+            f"/admin/audit-log?student_id={ADA_STUDENT_ID}&limit=1",
+            headers={"x-admin-token": "admin-token"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 429
+    assert audit_response.status_code == 200
+    events = audit_response.json()["events"]
+    assert len(events) == 1
+    event = events[0]
+    assert event["request_id"] == request_id
+    assert event["student_id"] == ADA_STUDENT_ID
+    assert event["key_preview"] == database.key_preview(ADA_KEY)
+    assert event["token_delta"] == 0
+    assert event["route"] == "/v1/chat/completions"
+    assert event["model"] == "dry-run-minimax"
+    assert event["status_code"] == 429
+    assert event["error_class"] == "rate_limit_window"
 
 
 def test_forward_to_portkey_uses_master_credential_not_student_key(

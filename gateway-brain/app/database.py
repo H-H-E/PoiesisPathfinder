@@ -27,6 +27,22 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
 CREATE INDEX IF NOT EXISTS idx_users_virtual_key_hash ON users(virtual_key_hash);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id TEXT NOT NULL,
+    student_id TEXT,
+    key_preview TEXT,
+    token_delta INTEGER NOT NULL DEFAULT 0,
+    route TEXT NOT NULL,
+    model TEXT,
+    status_code INTEGER NOT NULL,
+    error_class TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_student_created ON audit_log(student_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_request_id ON audit_log(request_id);
 """
 
 
@@ -149,6 +165,10 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     data = dict(row)
     data["is_active"] = bool(data["is_active"])
     return data
+
+
+def audit_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return dict(row)
 
 
 def get_user_by_virtual_key(
@@ -288,6 +308,85 @@ def record_token_usage(
     if row is None:
         raise KeyError(f"Unknown student ID: {student_id}")
     return int(row["total_tokens_consumed"]), bool(row["is_active"])
+
+
+def record_audit_event(
+    database_path: str,
+    *,
+    request_id: str,
+    student_id: str | None,
+    key_preview: str | None,
+    token_delta: int,
+    route: str,
+    model: str | None,
+    status_code: int,
+    error_class: str | None,
+) -> int:
+    now = utc_now()
+    with connect(database_path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO audit_log (
+                request_id,
+                student_id,
+                key_preview,
+                token_delta,
+                route,
+                model,
+                status_code,
+                error_class,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request_id,
+                student_id,
+                key_preview,
+                token_delta,
+                route,
+                model,
+                status_code,
+                error_class,
+                now,
+            ),
+        )
+        connection.commit()
+    return int(cursor.lastrowid)
+
+
+def list_audit_events(
+    database_path: str,
+    *,
+    student_id: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    bounded_limit = min(max(limit, 1), 500)
+    with connect(database_path) as connection:
+        if student_id:
+            rows = connection.execute(
+                """
+                SELECT id, request_id, student_id, key_preview, token_delta, route, model,
+                       status_code, error_class, created_at
+                FROM audit_log
+                WHERE student_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (student_id, bounded_limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT id, request_id, student_id, key_preview, token_delta, route, model,
+                       status_code, error_class, created_at
+                FROM audit_log
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+    return [audit_row_to_dict(row) for row in rows]
 
 
 def set_active(database_path: str, student_id: str, active: bool) -> None:

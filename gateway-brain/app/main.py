@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -25,6 +25,7 @@ from app.limiter import LimitStatus, SlidingWindowLimiter
 STUDENT_KEY_PREFIX = "sk-poiesis-"
 VALID_CHAT_ROLES = {"system", "user", "assistant", "tool"}
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{8,128}$")
+CHAT_COMPLETIONS_ROUTE = "/v1/chat/completions"
 logger = logging.getLogger("poiesis.gateway")
 
 
@@ -171,6 +172,67 @@ def usage_total_tokens(payload: dict[str, Any]) -> int:
     if token_total is None:
         return 0
     return token_total
+
+
+def chat_model_from_payload(payload: dict[str, Any] | None) -> str | None:
+    if not payload:
+        return None
+    model = payload.get("model")
+    if isinstance(model, str) and model.strip():
+        return model
+    return None
+
+
+def audit_error_class(exc: HTTPException) -> str:
+    detail = normalize_error_detail(exc.detail)
+    error_class = detail.get("error_class")
+    if isinstance(error_class, str) and error_class:
+        return error_class
+    scope = detail.get("scope")
+    if isinstance(scope, str) and scope:
+        return f"rate_limit_{scope}"
+    message = str(detail.get("message", "")).lower()
+    if "monthly token budget" in message:
+        return "monthly_budget_spent"
+    if "streaming is disabled" in message:
+        return "streaming_disabled"
+    if "rate limiter unavailable" in message:
+        return "rate_limiter_unavailable"
+    if "request body exceeds" in message or "exceeds the limit" in message:
+        return "request_too_large"
+    if exc.status_code == 401:
+        return "unauthorized"
+    if exc.status_code == 400:
+        return "bad_request"
+    return f"http_{exc.status_code}"
+
+
+def record_audit_event_safe(
+    settings: Settings,
+    *,
+    request_id: str,
+    student_id: str | None,
+    key_preview: str | None,
+    token_delta: int,
+    route: str,
+    model: str | None,
+    status_code: int,
+    error_class: str | None,
+) -> None:
+    try:
+        database.record_audit_event(
+            settings.database_path,
+            request_id=request_id,
+            student_id=student_id,
+            key_preview=key_preview,
+            token_delta=token_delta,
+            route=route,
+            model=model,
+            status_code=status_code,
+            error_class=error_class,
+        )
+    except Exception:
+        logger.exception("audit log write failed request_id=%s student_id=%s", request_id, student_id)
 
 
 async def read_limited_json_body(
@@ -533,153 +595,197 @@ async def chat_completions(
         student_id,
         key_preview,
     )
-    if not user["is_active"]:
-        if int(user["total_tokens_consumed"]) >= settings.monthly_token_ceiling:
+    payload: dict[str, Any] | None = None
+    model: str | None = None
+    token_delta = 0
+    try:
+        if not user["is_active"]:
+            if int(user["total_tokens_consumed"]) >= settings.monthly_token_ceiling:
+                raise HTTPException(
+                    status_code=403,
+                    detail=error_detail("Monthly token budget spent.", key_preview=key_preview),
+                )
+            raise HTTPException(
+                status_code=401,
+                detail=error_detail("Unknown or inactive virtual key.", key_preview=key_preview),
+            )
+
+        if database.deactivate_if_spent(settings.database_path, student_id, settings.monthly_token_ceiling):
             raise HTTPException(
                 status_code=403,
                 detail=error_detail("Monthly token budget spent.", key_preview=key_preview),
             )
-        raise HTTPException(
-            status_code=401,
-            detail=error_detail("Unknown or inactive virtual key.", key_preview=key_preview),
-        )
 
-    if database.deactivate_if_spent(settings.database_path, student_id, settings.monthly_token_ceiling):
-        raise HTTPException(
-            status_code=403,
-            detail=error_detail("Monthly token budget spent.", key_preview=key_preview),
-        )
-
-    payload = await read_limited_json_body(request, settings, key_preview=key_preview)
-    if payload.get("stream") is True and not settings.allow_streaming:
-        raise HTTPException(
-            status_code=400,
-            detail=error_detail(
-                "Streaming is disabled because usage accounting requires the final OpenAI usage block.",
-                key_preview=key_preview,
-            ),
-        )
-
-    tier = settings.request_tier_for_student(student_id)
-    payload = dict(payload)
-    payload.pop("poiesis_tier", None)
-
-    await enforce_rate_limits(
-        limiter=limiter,
-        settings=settings,
-        identity=student_id,
-        key_preview=key_preview,
-        tier=tier,
-    )
-
-    if settings.dry_run_upstream:
-        response_payload = dry_run_response(payload)
-        token_delta = usage_total_tokens(response_payload)
-        if token_delta:
-            database.record_token_usage(
-                settings.database_path,
-                student_id,
-                token_delta,
-                settings.monthly_token_ceiling,
+        payload = await read_limited_json_body(request, settings, key_preview=key_preview)
+        model = chat_model_from_payload(payload)
+        if payload.get("stream") is True and not settings.allow_streaming:
+            raise HTTPException(
+                status_code=400,
+                detail=error_detail(
+                    "Streaming is disabled because usage accounting requires the final OpenAI usage block.",
+                    key_preview=key_preview,
+                ),
             )
-        logger.info(
-            "chat request completed request_id=%s student_id=%s status_code=200 dry_run=true",
-            request_id,
-            student_id,
-        )
-        return JSONResponse(response_payload, headers={"x-request-id": request_id})
 
-    try:
-        upstream_response = await forward_to_portkey(
-            payload=payload,
+        tier = settings.request_tier_for_student(student_id)
+        payload = dict(payload)
+        payload.pop("poiesis_tier", None)
+
+        await enforce_rate_limits(
+            limiter=limiter,
             settings=settings,
-            student_id=student_id,
+            identity=student_id,
             key_preview=key_preview,
-            request_id=request_id,
             tier=tier,
         )
-    except httpx.TimeoutException as exc:
-        logger.warning(
-            "upstream timeout request_id=%s student_id=%s",
-            request_id,
-            student_id,
-        )
-        raise HTTPException(
-            status_code=504,
-            detail=error_detail(
-                "Upstream request timed out; token usage was not updated.",
-                key_preview=key_preview,
-                error_class="upstream_timeout",
-            ),
-        ) from exc
-    except httpx.RequestError as exc:
-        logger.warning(
-            "upstream request error request_id=%s student_id=%s error=%s",
-            request_id,
-            student_id,
-            exc.__class__.__name__,
-        )
-        raise HTTPException(
-            status_code=502,
-            detail=error_detail(
-                "Upstream request failed; token usage was not updated.",
-                key_preview=key_preview,
-                error_class="upstream_request_error",
-            ),
-        ) from exc
 
-    content_type = upstream_response.headers.get("content-type", "application/json")
-    if upstream_response.status_code < 400:
-        if "application/json" not in content_type:
-            raise HTTPException(
-                status_code=502,
-                detail=error_detail(
-                    "Upstream response did not include usable usage; token usage was not updated.",
-                    key_preview=key_preview,
-                    error_class="missing_usage",
-                ),
+        if settings.dry_run_upstream:
+            response_payload = dry_run_response(payload)
+            token_delta = usage_total_tokens(response_payload)
+            if token_delta:
+                database.record_token_usage(
+                    settings.database_path,
+                    student_id,
+                    token_delta,
+                    settings.monthly_token_ceiling,
+                )
+            record_audit_event_safe(
+                settings,
+                request_id=request_id,
+                student_id=student_id,
+                key_preview=key_preview,
+                token_delta=token_delta,
+                route=CHAT_COMPLETIONS_ROUTE,
+                model=model,
+                status_code=200,
+                error_class=None,
             )
+            logger.info(
+                "chat request completed request_id=%s student_id=%s status_code=200 dry_run=true",
+                request_id,
+                student_id,
+            )
+            return JSONResponse(response_payload, headers={"x-request-id": request_id})
+
         try:
-            response_payload = upstream_response.json()
-        except json.JSONDecodeError as exc:
+            upstream_response = await forward_to_portkey(
+                payload=payload,
+                settings=settings,
+                student_id=student_id,
+                key_preview=key_preview,
+                request_id=request_id,
+                tier=tier,
+            )
+        except httpx.TimeoutException as exc:
+            logger.warning(
+                "upstream timeout request_id=%s student_id=%s",
+                request_id,
+                student_id,
+            )
             raise HTTPException(
-                status_code=502,
+                status_code=504,
                 detail=error_detail(
-                    "Upstream response did not include usable usage; token usage was not updated.",
+                    "Upstream request timed out; token usage was not updated.",
                     key_preview=key_preview,
-                    error_class="missing_usage",
+                    error_class="upstream_timeout",
                 ),
             ) from exc
-        token_delta = parse_usage_total_tokens(response_payload)
-        if token_delta is None:
+        except httpx.RequestError as exc:
+            logger.warning(
+                "upstream request error request_id=%s student_id=%s error=%s",
+                request_id,
+                student_id,
+                exc.__class__.__name__,
+            )
             raise HTTPException(
                 status_code=502,
                 detail=error_detail(
-                    "Upstream response did not include usable usage; token usage was not updated.",
+                    "Upstream request failed; token usage was not updated.",
                     key_preview=key_preview,
-                    error_class="missing_usage",
+                    error_class="upstream_request_error",
                 ),
-            )
-        if token_delta:
-            database.record_token_usage(
-                settings.database_path,
-                student_id,
-                token_delta,
-                settings.monthly_token_ceiling,
-            )
+            ) from exc
 
-    logger.info(
-        "chat request completed request_id=%s student_id=%s status_code=%s dry_run=false",
-        request_id,
-        student_id,
-        upstream_response.status_code,
-    )
-    return Response(
-        content=upstream_response.content,
-        status_code=upstream_response.status_code,
-        media_type=content_type,
-        headers={"x-request-id": request_id},
-    )
+        content_type = upstream_response.headers.get("content-type", "application/json")
+        error_class = None
+        if upstream_response.status_code < 400:
+            if "application/json" not in content_type:
+                raise HTTPException(
+                    status_code=502,
+                    detail=error_detail(
+                        "Upstream response did not include usable usage; token usage was not updated.",
+                        key_preview=key_preview,
+                        error_class="missing_usage",
+                    ),
+                )
+            try:
+                response_payload = upstream_response.json()
+            except json.JSONDecodeError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=error_detail(
+                        "Upstream response did not include usable usage; token usage was not updated.",
+                        key_preview=key_preview,
+                        error_class="missing_usage",
+                    ),
+                ) from exc
+            parsed_delta = parse_usage_total_tokens(response_payload)
+            if parsed_delta is None:
+                raise HTTPException(
+                    status_code=502,
+                    detail=error_detail(
+                        "Upstream response did not include usable usage; token usage was not updated.",
+                        key_preview=key_preview,
+                        error_class="missing_usage",
+                    ),
+                )
+            token_delta = parsed_delta
+            if token_delta:
+                database.record_token_usage(
+                    settings.database_path,
+                    student_id,
+                    token_delta,
+                    settings.monthly_token_ceiling,
+                )
+        else:
+            error_class = "upstream_http_error"
+
+        record_audit_event_safe(
+            settings,
+            request_id=request_id,
+            student_id=student_id,
+            key_preview=key_preview,
+            token_delta=token_delta,
+            route=CHAT_COMPLETIONS_ROUTE,
+            model=model,
+            status_code=upstream_response.status_code,
+            error_class=error_class,
+        )
+        logger.info(
+            "chat request completed request_id=%s student_id=%s status_code=%s dry_run=false",
+            request_id,
+            student_id,
+            upstream_response.status_code,
+        )
+        return Response(
+            content=upstream_response.content,
+            status_code=upstream_response.status_code,
+            media_type=content_type,
+            headers={"x-request-id": request_id},
+        )
+    except HTTPException as exc:
+        record_audit_event_safe(
+            settings,
+            request_id=request_id,
+            student_id=student_id,
+            key_preview=key_preview,
+            token_delta=token_delta,
+            route=CHAT_COMPLETIONS_ROUTE,
+            model=model,
+            status_code=exc.status_code,
+            error_class=audit_error_class(exc),
+        )
+        raise
 
 
 @app.get("/admin/users", dependencies=[Depends(require_admin)])
@@ -701,6 +807,21 @@ async def admin_users(
         "standard_burst_limit": settings.standard_burst_limit,
         "high_speed_burst_limit": settings.high_speed_burst_limit,
         "burst_window_seconds": settings.burst_window_seconds,
+    }
+
+
+@app.get("/admin/audit-log", dependencies=[Depends(require_admin)])
+async def admin_audit_log(
+    student_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    settings: Settings = Depends(get_app_settings),
+) -> dict[str, Any]:
+    return {
+        "events": database.list_audit_events(
+            settings.database_path,
+            student_id=student_id,
+            limit=limit,
+        )
     }
 
 
@@ -727,14 +848,39 @@ async def reset_user_window(
 
 @app.post("/admin/users/{student_id}/adjust-tokens", dependencies=[Depends(require_admin)])
 async def adjust_tokens(
+    request: Request,
     student_id: str,
     payload: TokenAdjustmentPayload,
     settings: Settings = Depends(get_app_settings),
 ) -> dict[str, Any]:
+    request_id = request_id_from_headers(request)
+    request.state.request_id = request_id
     user = database.get_user_by_student_id(settings.database_path, student_id)
     if user is None:
+        record_audit_event_safe(
+            settings,
+            request_id=request_id,
+            student_id=student_id,
+            key_preview=None,
+            token_delta=0,
+            route=f"/admin/users/{student_id}/adjust-tokens",
+            model=None,
+            status_code=404,
+            error_class="unknown_student",
+        )
         raise HTTPException(status_code=404, detail=error_detail("Unknown student ID."))
     total = database.increment_tokens(settings.database_path, student_id, payload.delta_tokens)
+    record_audit_event_safe(
+        settings,
+        request_id=request_id,
+        student_id=student_id,
+        key_preview=str(user["key_preview"]),
+        token_delta=payload.delta_tokens,
+        route=f"/admin/users/{student_id}/adjust-tokens",
+        model=None,
+        status_code=200,
+        error_class=None,
+    )
     return {
         "ok": True,
         "student_id": student_id,
@@ -746,12 +892,37 @@ async def adjust_tokens(
 
 @app.post("/admin/users/{student_id}/active", dependencies=[Depends(require_admin)])
 async def set_user_active(
+    request: Request,
     student_id: str,
     payload: ReactivatePayload,
     settings: Settings = Depends(get_app_settings),
 ) -> dict[str, Any]:
+    request_id = request_id_from_headers(request)
+    request.state.request_id = request_id
     user = database.get_user_by_student_id(settings.database_path, student_id)
     if user is None:
+        record_audit_event_safe(
+            settings,
+            request_id=request_id,
+            student_id=student_id,
+            key_preview=None,
+            token_delta=0,
+            route=f"/admin/users/{student_id}/active",
+            model=None,
+            status_code=404,
+            error_class="unknown_student",
+        )
         raise HTTPException(status_code=404, detail=error_detail("Unknown student ID."))
     database.set_active(settings.database_path, student_id, payload.is_active)
+    record_audit_event_safe(
+        settings,
+        request_id=request_id,
+        student_id=student_id,
+        key_preview=str(user["key_preview"]),
+        token_delta=0,
+        route=f"/admin/users/{student_id}/active",
+        model=None,
+        status_code=200,
+        error_class="admin_unlock" if payload.is_active else "admin_lock",
+    )
     return {"ok": True, "student_id": student_id, "key_preview": user["key_preview"], "is_active": payload.is_active}

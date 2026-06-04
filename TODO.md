@@ -140,7 +140,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [x] Add admin token adjustments.
   - Negative deltas restore allowance after a false positive or test.
   - Positive deltas allow manual accounting correction.
-- [ ] Add an audit log table.
+- [x] Add an audit log table.
   - Fields: request ID, `student_id`, `key_preview`, token delta, route, model, status code, timestamp, and error class.
   - Acceptance: admin can explain why a student was blocked.
 
