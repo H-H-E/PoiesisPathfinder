@@ -177,23 +177,17 @@ async def enforce_rate_limits(
     virtual_key: str,
     tier: str,
 ) -> None:
-    long_window = await limiter.check_and_record(
+    long_window, burst_window = await limiter.check_and_record_window_and_burst(
         virtual_key=virtual_key,
         tier=tier,
-        scope="window",
         window_seconds=settings.rate_window_seconds,
-        limit=settings.long_window_limit_for(tier),
+        window_limit=settings.long_window_limit_for(tier),
+        burst_seconds=settings.burst_window_seconds,
+        burst_limit=settings.burst_limit_for(tier),
     )
     if not long_window.allowed:
         raise_rate_limit_error(long_window)
 
-    burst_window = await limiter.check_and_record(
-        virtual_key=virtual_key,
-        tier=tier,
-        scope="burst",
-        window_seconds=settings.burst_window_seconds,
-        limit=settings.burst_limit_for(tier),
-    )
     if not burst_window.allowed:
         raise_rate_limit_error(burst_window)
 

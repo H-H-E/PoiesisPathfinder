@@ -38,6 +38,40 @@ class AllowingLimiter:
             window_seconds=window_seconds,
         )
 
+    async def check_and_record_window_and_burst(
+        self,
+        *,
+        virtual_key: str,
+        tier: str,
+        window_seconds: int,
+        window_limit: int,
+        burst_seconds: int,
+        burst_limit: int,
+    ) -> tuple[LimitStatus, LimitStatus]:
+        self.calls += 1
+        return (
+            LimitStatus(
+                scope="window",
+                tier=tier,
+                allowed=True,
+                count=1,
+                limit=window_limit,
+                remaining=window_limit - 1,
+                reset_after_seconds=0,
+                window_seconds=window_seconds,
+            ),
+            LimitStatus(
+                scope="burst",
+                tier=tier,
+                allowed=True,
+                count=1,
+                limit=burst_limit,
+                remaining=burst_limit - 1,
+                reset_after_seconds=0,
+                window_seconds=burst_seconds,
+            ),
+        )
+
 
 def test_seed_script_creates_exactly_seven_active_students(
     tmp_path: Path,

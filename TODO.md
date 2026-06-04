@@ -88,7 +88,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 ## Milestone 4: Redis Sliding Window Limits
 
-- [ ] Replace two-step limiter recording with an atomic multi-window operation.
+- [x] Replace two-step limiter recording with an atomic multi-window operation.
   - Acceptance: five-hour and burst windows are both checked first, then both recorded only if both pass.
 - [ ] Enforce the standard five-hour window.
   - Limit: `642` requests per `18,000` seconds per user.
@@ -100,7 +100,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Standard: 2 requests per minute.
   - High-speed: 1 request per minute.
   - Acceptance: runaway loops are blocked quickly in local curl verification.
-- [ ] Use atomic Redis operations.
+- [x] Use atomic Redis operations.
   - Acceptance: concurrent requests cannot race past the quota.
 - [ ] Add Redis key expiration.
   - Acceptance: idle user rate-limit keys disappear after the rolling window plus cleanup buffer.
