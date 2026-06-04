@@ -32,13 +32,13 @@ Operator browser
 | --- | --- | --- | --- |
 | `gateway-brain` | `gateway-brain/` | FastAPI governance brain, student auth, quota checks, token accounting, Portkey forwarding | `8000` |
 | `dashboard` | `dashboard/` | Next.js operator dashboard and admin proxy routes | `3000` |
-| `redis` | external or future compose service | Rolling-window and burst counters | `6379` |
-| `portkey` | external or future compose service | Provider routing to Minimax | `8787` |
+| `redis` | `docker-compose.yml` | Rolling-window and burst counters | `6379` |
+| `portkey` | `docker-compose.yml` | Provider routing to Minimax | `8787` |
 | `seed_club.py` | `gateway-brain/seed_club.py` | Seeds seven coding-club student keys into SQLite | n/a |
 
-Root Docker Compose orchestration is the next backlog milestone and is not
-present yet. Until `docker-compose.yml` lands, run the services manually or wire
-equivalent containers from the existing Dockerfiles.
+The root `docker-compose.yml` starts Redis, Portkey, the FastAPI gateway, the
+Next.js dashboard, and a one-shot seed job. SQLite data is persisted in the
+`gateway-data` volume.
 
 ## Configuration
 
@@ -54,6 +54,7 @@ Important variables:
 | --- | --- |
 | `MINIMAX_API_KEY` | Master upstream key used by FastAPI when forwarding through Portkey. Never use a student key here. |
 | `PORTKEY_BASE_URL` | Portkey gateway URL. Use `http://localhost:8787` for manual local Portkey, or `http://portkey:8787` inside Docker. |
+| `PORTKEY_IMAGE` | Optional Compose override for the Portkey container image. The default is `portkeyai/gateway:latest`. |
 | `PORTKEY_PROVIDER` | Provider header value currently assumed to be `minimax`. |
 | `PORTKEY_CONFIG` | Optional Portkey config object/header value if provider-only routing is not enough. |
 | `DATABASE_PATH` | SQLite database path for student records and token totals. |
@@ -61,10 +62,47 @@ Important variables:
 | `POIESIS_ADMIN_TOKEN` | Token required by dashboard server routes when calling FastAPI admin endpoints. The current backend only enforces admin auth when this is set, so set it for any shared environment. |
 | `DRY_RUN_UPSTREAM` | `true` returns local OpenAI-shaped responses without contacting Portkey or Minimax. |
 | `ALLOW_STREAMING` | Defaults to `false`; streaming is blocked because accounting needs the final `usage` block. |
+| `GATEWAY_BRAIN_PORT`, `DASHBOARD_PORT`, `PORTKEY_PORT`, `REDIS_PORT` | Optional host port overrides for `docker compose` when the defaults are already in use. |
 
 ## Local Startup
 
 Use dry-run mode for local verification so Minimax is not contacted.
+
+### Docker Compose
+
+1. Create local environment:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   The Compose file has safe dry-run defaults, but a real `.env` keeps operator
+   tokens and future upstream settings explicit. Change `POIESIS_ADMIN_TOKEN`
+   before using the stack on a shared network.
+
+2. Start the stack:
+
+   ```bash
+   docker compose up --build
+   ```
+
+   If another local service already owns a default port, change the matching
+   `*_PORT` value in `.env` before starting Compose.
+
+3. Verify the services:
+
+   ```bash
+   curl -fsS http://localhost:8000/health
+   curl -fsS http://localhost:3000
+   ```
+
+4. Open the dashboard at `http://localhost:3000`.
+
+The Portkey service uses `portkeyai/gateway:latest`, which is the public Docker
+image name documented by Portkey. If Portkey changes packaging, set
+`PORTKEY_IMAGE` in `.env` and rerun `docker compose up --build`.
+
+### Manual Host Mode
 
 1. Create and edit local environment:
 
@@ -116,7 +154,7 @@ Use dry-run mode for local verification so Minimax is not contacted.
 
    ```bash
    cd dashboard
-   npm install
+   npm ci
    GATEWAY_BRAIN_URL=http://localhost:8000 POIESIS_ADMIN_TOKEN=replace-with-local-admin-token npm run dev
    ```
 
@@ -201,11 +239,17 @@ cd dashboard
 npm ci
 npm run lint
 npm run build
+npm audit --omit=dev --audit-level=moderate
 ```
 
-Full local deployment readiness is not complete until a root `docker-compose.yml`
-exists and `docker compose up --build` can start Redis, FastAPI, Portkey, the
-dashboard, and a one-shot seed job.
+```bash
+docker compose config
+docker compose up --build
+```
+
+Full local Gate A readiness also requires a successful dry-run chat request and
+a local spam check that proves the burst limiter blocks the third standard-tier
+request inside 60 seconds.
 
 ## Troubleshooting
 

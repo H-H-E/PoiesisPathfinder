@@ -1,0 +1,97 @@
+name: poiesispathfinder
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  portkey:
+    image: ${PORTKEY_IMAGE:-portkeyai/gateway:latest}
+    ports:
+      - "${PORTKEY_PORT:-8787}:8787"
+
+  seed:
+    build:
+      context: ./gateway-brain
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_PATH: ${DATABASE_PATH:-/data/database.db}
+    volumes:
+      - gateway-data:/data
+    command: ["python", "seed_club.py", "--database", "${DATABASE_PATH:-/data/database.db}"]
+
+  gateway-brain:
+    build:
+      context: ./gateway-brain
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_PATH: ${DATABASE_PATH:-/data/database.db}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PORTKEY_BASE_URL: ${PORTKEY_BASE_URL:-http://portkey:8787}
+      PORTKEY_PROVIDER: ${PORTKEY_PROVIDER:-minimax}
+      PORTKEY_CONFIG: ${PORTKEY_CONFIG:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      POIESIS_ADMIN_TOKEN: ${POIESIS_ADMIN_TOKEN:-replace-with-local-admin-token}
+      DRY_RUN_UPSTREAM: ${DRY_RUN_UPSTREAM:-true}
+      ALLOW_STREAMING: ${ALLOW_STREAMING:-false}
+      MONTHLY_TOKEN_CEILING: ${MONTHLY_TOKEN_CEILING:-185700000}
+      RATE_WINDOW_SECONDS: ${RATE_WINDOW_SECONDS:-18000}
+      STANDARD_WINDOW_LIMIT: ${STANDARD_WINDOW_LIMIT:-642}
+      HIGH_SPEED_WINDOW_LIMIT: ${HIGH_SPEED_WINDOW_LIMIT:-321}
+      BURST_WINDOW_SECONDS: ${BURST_WINDOW_SECONDS:-60}
+      STANDARD_BURST_LIMIT: ${STANDARD_BURST_LIMIT:-2}
+      HIGH_SPEED_BURST_LIMIT: ${HIGH_SPEED_BURST_LIMIT:-1}
+    ports:
+      - "${GATEWAY_BRAIN_PORT:-8000}:8000"
+    volumes:
+      - gateway-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      portkey:
+        condition: service_started
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  dashboard:
+    build:
+      context: ./dashboard
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      GATEWAY_BRAIN_URL: ${GATEWAY_BRAIN_URL:-http://gateway-brain:8000}
+      POIESIS_ADMIN_TOKEN: ${POIESIS_ADMIN_TOKEN:-replace-with-local-admin-token}
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    depends_on:
+      gateway-brain:
+        condition: service_healthy
+
+volumes:
+  gateway-data:
+  redis-data:
