@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import logging
 import re
@@ -553,6 +555,30 @@ def render_prometheus_metrics(snapshot: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+CSV_EXPORT_FIELDS = [
+    "student_id",
+    "student_name",
+    "key_preview",
+    "status",
+    "total_tokens_consumed",
+    "tokens_remaining",
+    "audit_event_count",
+    "successful_request_count",
+    "incident_count",
+    "audited_positive_tokens",
+    "latest_incident",
+    "last_activity_at",
+]
+
+
+def render_student_csv(rows: list[dict[str, Any]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=CSV_EXPORT_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return buffer.getvalue()
+
+
 def chat_content_size(content: Any, message_index: int, *, key_preview: str | None = None) -> int:
     if content is None:
         return 0
@@ -1048,6 +1074,19 @@ async def admin_audit_log(
             limit=limit,
         )
     }
+
+
+@app.get("/admin/export.csv", dependencies=[Depends(require_admin)])
+async def admin_export_csv(settings: Settings = Depends(get_app_settings)) -> Response:
+    rows = database.student_export_rows(
+        settings.database_path,
+        monthly_token_ceiling=settings.monthly_token_ceiling,
+    )
+    return Response(
+        content=render_student_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="poiesispathfinder-students.csv"'},
+    )
 
 
 @app.post("/admin/users/{student_id}/reset-window", dependencies=[Depends(require_admin)])

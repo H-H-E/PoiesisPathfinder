@@ -481,6 +481,66 @@ def metrics_snapshot(database_path: str) -> dict[str, Any]:
     }
 
 
+def student_export_rows(database_path: str, *, monthly_token_ceiling: int) -> list[dict[str, Any]]:
+    with connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                users.student_id,
+                users.student_name,
+                users.key_preview,
+                users.is_active,
+                users.total_tokens_consumed,
+                COUNT(audit_log.id) AS audit_event_count,
+                SUM(
+                    CASE
+                        WHEN audit_log.route = '/v1/chat/completions'
+                             AND audit_log.status_code >= 200
+                             AND audit_log.status_code < 400
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS successful_request_count,
+                SUM(CASE WHEN audit_log.error_class IS NOT NULL THEN 1 ELSE 0 END) AS incident_count,
+                SUM(CASE WHEN audit_log.token_delta > 0 THEN audit_log.token_delta ELSE 0 END)
+                    AS audited_positive_tokens,
+                MAX(audit_log.created_at) AS last_activity_at,
+                (
+                    SELECT latest.error_class
+                    FROM audit_log AS latest
+                    WHERE latest.student_id = users.student_id
+                      AND latest.error_class IS NOT NULL
+                    ORDER BY latest.id DESC
+                    LIMIT 1
+                ) AS latest_incident
+            FROM users
+            LEFT JOIN audit_log ON audit_log.student_id = users.student_id
+            GROUP BY users.student_id
+            ORDER BY users.student_name ASC
+            """
+        ).fetchall()
+    export_rows: list[dict[str, Any]] = []
+    for row in rows:
+        total_tokens = int(row["total_tokens_consumed"])
+        export_rows.append(
+            {
+                "student_id": row["student_id"],
+                "student_name": row["student_name"],
+                "key_preview": row["key_preview"],
+                "status": "active" if bool(row["is_active"]) else "inactive",
+                "total_tokens_consumed": total_tokens,
+                "tokens_remaining": max(monthly_token_ceiling - total_tokens, 0),
+                "audit_event_count": int(row["audit_event_count"] or 0),
+                "successful_request_count": int(row["successful_request_count"] or 0),
+                "incident_count": int(row["incident_count"] or 0),
+                "audited_positive_tokens": int(row["audited_positive_tokens"] or 0),
+                "latest_incident": row["latest_incident"] or "",
+                "last_activity_at": row["last_activity_at"] or "",
+            }
+        )
+    return export_rows
+
+
 def reset_monthly_token_totals(
     database_path: str,
     *,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 import logging
 from pathlib import Path
@@ -614,6 +615,67 @@ def test_metrics_endpoint_requires_admin_and_exports_prometheus_snapshot(
     assert "poiesis_request_error_ratio 0.666667" in body
     assert "poiesis_students_active 7" in body
     assert ADA_KEY not in body
+
+
+def test_admin_csv_export_requires_admin_and_summarizes_usage_and_incidents(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    database.increment_tokens(str(database_path), ADA_STUDENT_ID, 12)
+    database.record_audit_event(
+        str(database_path),
+        request_id="req-export-success",
+        student_id=ADA_STUDENT_ID,
+        key_preview=database.key_preview(ADA_KEY),
+        token_delta=12,
+        route="/v1/chat/completions",
+        model="dry-run-minimax",
+        status_code=200,
+        error_class=None,
+    )
+    database.record_audit_event(
+        str(database_path),
+        request_id="req-export-incident",
+        student_id=ADA_STUDENT_ID,
+        key_preview=database.key_preview(ADA_KEY),
+        token_delta=0,
+        route="/v1/chat/completions",
+        model="dry-run-minimax",
+        status_code=429,
+        error_class="rate_limit_window",
+    )
+
+    try:
+        client = _client_for_database(database_path)
+        unauthenticated_response = client.get("/admin/export.csv")
+        csv_response = client.get(
+            "/admin/export.csv",
+            headers={"x-admin-token": "admin-token"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert unauthenticated_response.status_code == 401
+    assert csv_response.status_code == 200
+    assert csv_response.headers["content-type"].startswith("text/csv")
+    assert "poiesispathfinder-students.csv" in csv_response.headers["content-disposition"]
+    assert ADA_KEY not in csv_response.text
+
+    rows = list(csv.DictReader(csv_response.text.splitlines()))
+    assert len(rows) == 7
+    ada = next(row for row in rows if row["student_id"] == ADA_STUDENT_ID)
+    assert ada["student_name"] == "Ada Lovelace"
+    assert ada["key_preview"] == database.key_preview(ADA_KEY)
+    assert ada["status"] == "active"
+    assert ada["total_tokens_consumed"] == "12"
+    assert ada["tokens_remaining"] == "185699988"
+    assert ada["audit_event_count"] == "2"
+    assert ada["successful_request_count"] == "1"
+    assert ada["incident_count"] == "1"
+    assert ada["audited_positive_tokens"] == "12"
+    assert ada["latest_incident"] == "rate_limit_window"
 
 
 def test_forward_to_portkey_uses_master_credential_not_student_key(

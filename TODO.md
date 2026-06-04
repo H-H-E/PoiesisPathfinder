@@ -222,5 +222,5 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Flag repeated identical prompts from the same student.
 - [x] Add Prometheus-style metrics.
   - Export request counts, blocks, token spend, upstream latency, and error rates.
-- [ ] Add teacher-friendly CSV export.
+- [x] Add teacher-friendly CSV export.
   - Export student usage and incidents for club administration.

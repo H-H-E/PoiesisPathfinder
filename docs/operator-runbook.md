@@ -170,6 +170,14 @@ Keep these views open during a class session:
     -H "x-admin-token: $POIESIS_ADMIN_TOKEN"
   ```
 
+- Teacher-friendly CSV export:
+
+  ```bash
+  curl -fsS http://localhost:8000/admin/export.csv \
+    -H "x-admin-token: $POIESIS_ADMIN_TOKEN" \
+    -o poiesispathfinder-students.csv
+  ```
+
 Watch for fast burst depletion, repeated 429 responses, inactive students,
 403 monthly budget responses, `semantic_loop_detected` audit events, and
 upstream 502/504 responses.
@@ -216,6 +224,12 @@ to the product UI.
 
 Run this at the billing boundary after exporting or reviewing the prior
 period's audit feed.
+
+```bash
+curl -fsS http://localhost:8000/admin/export.csv \
+  -H "x-admin-token: $POIESIS_ADMIN_TOKEN" \
+  -o poiesispathfinder-students-before-reset.csv
+```
 
 ```bash
 cd gateway-brain

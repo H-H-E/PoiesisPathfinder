@@ -291,6 +291,11 @@ Prometheus-style metrics are available at `GET /metrics` with the same
 token spend, upstream latency summaries, and active/inactive student gauges
 without raw student keys.
 
+A teacher-friendly CSV summary is available at `GET /admin/export.csv` with the
+same admin header. It exports one safe row per student with token usage,
+remaining allowance, request counts, incident counts, latest incident, and last
+activity time.
+
 ## Verification Commands
 
 Run the checks that match the area you changed:
