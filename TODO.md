@@ -66,10 +66,10 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Store an HMAC hash of each bearer key using `POIESIS_KEY_HASH_SECRET`.
   - Return only `student_id` and key preview to the dashboard.
   - Acceptance: raw bearer keys do not appear in dashboard JSON, Redis rate-limit identities, URLs, or forwarding metadata.
-- [ ] Enforce monthly token ceiling.
+- [x] Enforce monthly token ceiling.
   - Ceiling: `185,700,000` tokens per user.
   - Acceptance: when a user reaches the ceiling, `is_active` flips false and future requests return HTTP 403.
-- [ ] Deactivate immediately when a successful response crosses the monthly ceiling.
+- [x] Deactivate immediately when a successful response crosses the monthly ceiling.
   - Acceptance: post-hook token increment and cap lockout happen in one SQLite transaction.
 - [x] Preserve the OpenAI-compatible request path.
   - Endpoint: `POST /v1/chat/completions`.

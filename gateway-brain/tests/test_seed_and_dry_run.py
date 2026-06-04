@@ -188,6 +188,27 @@ def test_migration_drops_legacy_virtual_key_column_from_mixed_schema(tmp_path: P
     assert ADA_KEY not in json.dumps(database.list_users(str(database_path)))
 
 
+def test_record_token_usage_deactivates_when_ceiling_is_reached(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    database.increment_tokens(str(database_path), ADA_STUDENT_ID, 9)
+
+    total, is_active = database.record_token_usage(
+        str(database_path),
+        ADA_STUDENT_ID,
+        token_delta=1,
+        ceiling=10,
+    )
+
+    assert total == 10
+    assert is_active is False
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == 10
+    assert user["is_active"] is False
+
+
 def test_dry_run_chat_completion_is_openai_compatible_and_records_usage(
     tmp_path: Path,
 ) -> None:
@@ -234,6 +255,56 @@ def test_dry_run_chat_completion_is_openai_compatible_and_records_usage(
     assert "virtual_key" not in user
     assert "virtual_key_hash" not in user
     assert user["total_tokens_consumed"] == payload["usage"]["total_tokens"]
+
+
+def test_dry_run_completion_that_crosses_ceiling_locks_future_requests(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        monthly_token_ceiling=1,
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = AllowingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        first_response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        second_response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello again"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first_response.status_code == 200
+    assert first_response.json()["usage"]["total_tokens"] >= settings.monthly_token_ceiling
+    assert second_response.status_code == 403
+    assert second_response.json()["detail"] == "Monthly token budget spent."
+    assert limiter.calls == 1
+
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] >= settings.monthly_token_ceiling
+    assert user["is_active"] is False
 
 
 def test_streaming_is_rejected_before_rate_limit_recording(tmp_path: Path) -> None:

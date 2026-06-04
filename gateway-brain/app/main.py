@@ -322,10 +322,15 @@ async def chat_completions(
         virtual_key,
         settings.poiesis_key_hash_secret,
     )
-    if user is None or not user["is_active"]:
+    if user is None:
         raise HTTPException(status_code=401, detail="Unknown or inactive virtual key.")
 
     student_id = str(user["student_id"])
+    if not user["is_active"]:
+        if int(user["total_tokens_consumed"]) >= settings.monthly_token_ceiling:
+            raise HTTPException(status_code=403, detail="Monthly token budget spent.")
+        raise HTTPException(status_code=401, detail="Unknown or inactive virtual key.")
+
     if database.deactivate_if_spent(settings.database_path, student_id, settings.monthly_token_ceiling):
         raise HTTPException(status_code=403, detail="Monthly token budget spent.")
 
@@ -357,7 +362,12 @@ async def chat_completions(
         response_payload = dry_run_response(payload)
         token_delta = usage_total_tokens(response_payload)
         if token_delta:
-            database.increment_tokens(settings.database_path, student_id, token_delta)
+            database.record_token_usage(
+                settings.database_path,
+                student_id,
+                token_delta,
+                settings.monthly_token_ceiling,
+            )
         return JSONResponse(response_payload)
 
     upstream_response = await forward_to_portkey(
@@ -376,7 +386,12 @@ async def chat_completions(
             response_payload = {}
         token_delta = usage_total_tokens(response_payload)
         if token_delta:
-            database.increment_tokens(settings.database_path, student_id, token_delta)
+            database.record_token_usage(
+                settings.database_path,
+                student_id,
+                token_delta,
+                settings.monthly_token_ceiling,
+            )
 
     return Response(
         content=upstream_response.content,

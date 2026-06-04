@@ -258,6 +258,38 @@ def increment_tokens(database_path: str, student_id: str, token_delta: int) -> i
     return int(row["total_tokens_consumed"])
 
 
+def record_token_usage(
+    database_path: str,
+    student_id: str,
+    token_delta: int,
+    ceiling: int,
+) -> tuple[int, bool]:
+    now = utc_now()
+    with connect(database_path) as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        connection.execute(
+            """
+            UPDATE users
+            SET total_tokens_consumed = MAX(total_tokens_consumed + ?, 0),
+                is_active = CASE
+                    WHEN MAX(total_tokens_consumed + ?, 0) >= ? THEN 0
+                    ELSE is_active
+                END,
+                updated_at = ?
+            WHERE student_id = ?
+            """,
+            (token_delta, token_delta, ceiling, now, student_id),
+        )
+        row = connection.execute(
+            "SELECT total_tokens_consumed, is_active FROM users WHERE student_id = ?",
+            (student_id,),
+        ).fetchone()
+        connection.commit()
+    if row is None:
+        raise KeyError(f"Unknown student ID: {student_id}")
+    return int(row["total_tokens_consumed"]), bool(row["is_active"])
+
+
 def set_active(database_path: str, student_id: str, active: bool) -> None:
     now = utc_now()
     with connect(database_path) as connection:
