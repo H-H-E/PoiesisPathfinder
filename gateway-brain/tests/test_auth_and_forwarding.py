@@ -420,8 +420,151 @@ def test_chat_forwarding_threads_request_id_to_logs_headers_and_portkey(
 
     assert response.status_code == 200
     assert response.headers["x-request-id"] == request_id
+    assert captured["headers"]["Authorization"] == "Bearer master-secret"
     metadata = json.loads(captured["headers"]["x-portkey-metadata"])
     assert metadata["request_id"] == request_id
     assert metadata["student_id"] == ADA_STUDENT_ID
+    assert ADA_KEY not in json.dumps(captured["headers"])
+    assert ADA_KEY not in json.dumps(captured["payload"])
     assert request_id in caplog.text
     assert ADA_STUDENT_ID in caplog.text
+
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == 3
+
+
+def test_chat_forwarding_timeout_returns_504_without_token_update(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    class TimeoutAsyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> TimeoutAsyncClient:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def post(
+            self,
+            target: str,
+            *,
+            headers: dict[str, str],
+            json: dict[str, Any],
+        ) -> httpx.Response:
+            raise httpx.TimeoutException("timed out")
+
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=False,
+        portkey_base_url="http://portkey:8787",
+        portkey_provider="minimax",
+        PORTKEY_UPSTREAM_API_KEY="master-secret",
+        poiesis_admin_token="admin-token",
+    )
+    request_id = "req-timeout-forward-0001"
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", TimeoutAsyncClient)
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: AllowingLimiter()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ADA_KEY}",
+                "x-request-id": request_id,
+            },
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 504
+    assert response.headers["x-request-id"] == request_id
+    detail = response.json()["detail"]
+    assert detail["message"] == "Upstream request timed out; token usage was not updated."
+    assert detail["key_preview"] == database.key_preview(ADA_KEY)
+    assert detail["error_class"] == "upstream_timeout"
+
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == 0
+
+
+def test_chat_forwarding_request_error_returns_502_without_token_update(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    class FailingAsyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FailingAsyncClient:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def post(
+            self,
+            target: str,
+            *,
+            headers: dict[str, str],
+            json: dict[str, Any],
+        ) -> httpx.Response:
+            raise httpx.ConnectError("portkey unavailable")
+
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=False,
+        portkey_base_url="http://portkey:8787",
+        portkey_provider="minimax",
+        PORTKEY_UPSTREAM_API_KEY="master-secret",
+        poiesis_admin_token="admin-token",
+    )
+    request_id = "req-error-forward-0001"
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", FailingAsyncClient)
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: AllowingLimiter()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ADA_KEY}",
+                "x-request-id": request_id,
+            },
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 502
+    assert response.headers["x-request-id"] == request_id
+    detail = response.json()["detail"]
+    assert detail["message"] == "Upstream request failed; token usage was not updated."
+    assert detail["key_preview"] == database.key_preview(ADA_KEY)
+    assert detail["error_class"] == "upstream_request_error"
+
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == 0

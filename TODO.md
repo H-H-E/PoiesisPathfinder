@@ -117,14 +117,14 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [ ] Decide whether to use a Portkey config object or provider-only routing.
   - Option A: `x-portkey-provider` plus Minimax API key in `Authorization`.
   - Option B: `x-portkey-config` with provider and retry settings.
-- [ ] Strip student credentials before forwarding.
+- [x] Strip student credentials before forwarding.
   - Acceptance: upstream only sees the master Minimax/Portkey credential.
 - [x] Add Portkey metadata.
   - Include `student_id`, `key_preview`, request tier, and request correlation ID.
   - Hardened target: avoid raw keys and student names in upstream metadata.
 - [ ] Confirm retries do not double-count tokens.
   - Acceptance: token accounting happens once from the final successful OpenAI-style response.
-- [ ] Add timeout and upstream error handling.
+- [x] Add timeout and upstream error handling.
   - Acceptance: upstream timeouts return clear 502/504-style errors without updating token usage.
 
 ## Milestone 6: Token Accounting

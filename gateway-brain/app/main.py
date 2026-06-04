@@ -582,14 +582,44 @@ async def chat_completions(
         )
         return JSONResponse(response_payload, headers={"x-request-id": request_id})
 
-    upstream_response = await forward_to_portkey(
-        payload=payload,
-        settings=settings,
-        student_id=student_id,
-        key_preview=key_preview,
-        request_id=request_id,
-        tier=tier,
-    )
+    try:
+        upstream_response = await forward_to_portkey(
+            payload=payload,
+            settings=settings,
+            student_id=student_id,
+            key_preview=key_preview,
+            request_id=request_id,
+            tier=tier,
+        )
+    except httpx.TimeoutException as exc:
+        logger.warning(
+            "upstream timeout request_id=%s student_id=%s",
+            request_id,
+            student_id,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=error_detail(
+                "Upstream request timed out; token usage was not updated.",
+                key_preview=key_preview,
+                error_class="upstream_timeout",
+            ),
+        ) from exc
+    except httpx.RequestError as exc:
+        logger.warning(
+            "upstream request error request_id=%s student_id=%s error=%s",
+            request_id,
+            student_id,
+            exc.__class__.__name__,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=error_detail(
+                "Upstream request failed; token usage was not updated.",
+                key_preview=key_preview,
+                error_class="upstream_request_error",
+            ),
+        ) from exc
 
     content_type = upstream_response.headers.get("content-type", "application/json")
     if upstream_response.status_code < 400 and "application/json" in content_type:
