@@ -102,9 +102,9 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Acceptance: runaway loops are blocked quickly in local curl verification.
 - [x] Use atomic Redis operations.
   - Acceptance: concurrent requests cannot race past the quota.
-- [ ] Add Redis key expiration.
+- [x] Add Redis key expiration.
   - Acceptance: idle user rate-limit keys disappear after the rolling window plus cleanup buffer.
-- [ ] Fail closed on Redis unavailability.
+- [x] Fail closed on Redis unavailability.
   - Acceptance: Redis connection errors return HTTP 503 and do not forward to Portkey.
 - [ ] Add admin reset endpoints.
   - Reset standard window, high-speed window, or all windows for one student.

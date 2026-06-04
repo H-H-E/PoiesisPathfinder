@@ -7,6 +7,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from app.config import Settings
 from app.limiter import SlidingWindowLimiter
@@ -81,9 +82,34 @@ def test_burst_rejection_does_not_consume_long_window_quota() -> None:
             )
             assert window.count == 2
             assert burst.count == 2
+            window_ttl = await redis.ttl(limiter._key(virtual_key, "standard", "window"))
+            burst_ttl = await redis.ttl(limiter._key(virtual_key, "standard", "burst"))
+            assert 0 < window_ttl <= settings.rate_window_seconds + 60
+            assert 0 < burst_ttl <= settings.burst_window_seconds + 60
         finally:
             await _cleanup(limiter, virtual_key)
             await redis.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_redis_unavailability_fails_closed_with_503() -> None:
+    class FailingLimiter:
+        async def check_and_record_window_and_burst(self, **_: object) -> object:
+            raise RedisError("simulated Redis outage")
+
+    settings = Settings(_env_file=None)
+
+    async def scenario() -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_rate_limits(
+                limiter=FailingLimiter(),  # type: ignore[arg-type]
+                settings=settings,
+                virtual_key="sk-poiesis-test",
+                tier="standard",
+            )
+        assert exc_info.value.status_code == 503
+        assert "not forwarded" in exc_info.value.detail
 
     asyncio.run(scenario())
 

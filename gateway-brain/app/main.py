@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from app import database
 from app.config import Settings, get_settings
@@ -177,14 +178,20 @@ async def enforce_rate_limits(
     virtual_key: str,
     tier: str,
 ) -> None:
-    long_window, burst_window = await limiter.check_and_record_window_and_burst(
-        virtual_key=virtual_key,
-        tier=tier,
-        window_seconds=settings.rate_window_seconds,
-        window_limit=settings.long_window_limit_for(tier),
-        burst_seconds=settings.burst_window_seconds,
-        burst_limit=settings.burst_limit_for(tier),
-    )
+    try:
+        long_window, burst_window = await limiter.check_and_record_window_and_burst(
+            virtual_key=virtual_key,
+            tier=tier,
+            window_seconds=settings.rate_window_seconds,
+            window_limit=settings.long_window_limit_for(tier),
+            burst_seconds=settings.burst_window_seconds,
+            burst_limit=settings.burst_limit_for(tier),
+        )
+    except RedisError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Rate limiter unavailable; request was not forwarded.",
+        ) from exc
     if not long_window.allowed:
         raise_rate_limit_error(long_window)
 
