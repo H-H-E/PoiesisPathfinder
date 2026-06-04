@@ -289,6 +289,94 @@ def test_admin_reset_window_endpoint_rejects_unknown_student_without_reset(
     assert limiter.reset_calls == []
 
 
+def test_admin_adjust_tokens_applies_positive_and_negative_deltas(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    database.increment_tokens(str(database_path), ADA_STUDENT_ID, 100)
+
+    try:
+        client = _client_for_database(database_path)
+        positive_response = client.post(
+            f"/admin/users/{ADA_STUDENT_ID}/adjust-tokens",
+            headers={"x-admin-token": "admin-token"},
+            json={"delta_tokens": 25},
+        )
+        negative_response = client.post(
+            f"/admin/users/{ADA_STUDENT_ID}/adjust-tokens",
+            headers={"x-admin-token": "admin-token"},
+            json={"delta_tokens": -40},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert positive_response.status_code == 200
+    assert positive_response.json() == {
+        "ok": True,
+        "student_id": ADA_STUDENT_ID,
+        "key_preview": database.key_preview(ADA_KEY),
+        "total_tokens_consumed": 125,
+        "tokens_remaining": 185_699_875,
+    }
+    assert negative_response.status_code == 200
+    assert negative_response.json()["total_tokens_consumed"] == 85
+    assert negative_response.json()["tokens_remaining"] == 185_699_915
+
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == 85
+
+
+def test_admin_adjust_tokens_clamps_negative_totals_at_zero(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    database.increment_tokens(str(database_path), ADA_STUDENT_ID, 12)
+
+    try:
+        client = _client_for_database(database_path)
+        response = client.post(
+            f"/admin/users/{ADA_STUDENT_ID}/adjust-tokens",
+            headers={"x-admin-token": "admin-token"},
+            json={"delta_tokens": -999},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["total_tokens_consumed"] == 0
+    assert response.json()["tokens_remaining"] == 185_700_000
+
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == 0
+
+
+def test_admin_adjust_tokens_rejects_unknown_student_without_adjustment(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+
+    try:
+        client = _client_for_database(database_path)
+        response = client.post(
+            "/admin/users/stu-missing/adjust-tokens",
+            headers={"x-admin-token": "admin-token"},
+            json={"delta_tokens": 25},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["message"] == "Unknown student ID."
+
+
 def test_forward_to_portkey_uses_master_credential_not_student_key(
     monkeypatch: Any,
 ) -> None:

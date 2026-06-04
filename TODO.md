@@ -137,7 +137,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Acceptance: missing usage cannot silently bypass monthly budgets.
 - [x] Make SQLite increments atomic.
   - Acceptance: concurrent successful responses do not lose updates.
-- [ ] Add admin token adjustments.
+- [x] Add admin token adjustments.
   - Negative deltas restore allowance after a false positive or test.
   - Positive deltas allow manual accounting correction.
 - [ ] Add an audit log table.
