@@ -170,7 +170,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [x] Add spam test script.
   - Inputs: virtual key, count, tier, delay.
   - Acceptance: standard tier blocks on the third request within 60 seconds.
-- [ ] Add pytest coverage for backend logic.
+- [x] Add pytest coverage for backend logic.
   - Auth failures.
   - Monthly cap lockout.
   - Redis five-hour window.
@@ -181,7 +181,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Acceptance: `npm run build` completes inside `dashboard/`.
 - [ ] Add Docker smoke test.
   - Acceptance: compose starts, seed job runs, dashboard loads, dry-run chat request succeeds, spam request blocks.
-- [ ] Add reports directory.
+- [x] Add reports directory.
   - Store validation notes under `reports/` after each release checkpoint.
 
 ## Milestone 9: Operator Runbook
