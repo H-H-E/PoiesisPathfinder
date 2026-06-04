@@ -54,7 +54,7 @@ Important variables:
 | --- | --- |
 | `MINIMAX_API_KEY` | Master upstream key used by FastAPI when forwarding through Portkey. Never use a student key here. |
 | `PORTKEY_BASE_URL` | Portkey gateway URL. Use `http://localhost:8787` for manual local Portkey, or `http://portkey:8787` inside Docker. |
-| `PORTKEY_IMAGE` | Optional Compose override for the Portkey container image. The default is `portkeyai/gateway:latest`. |
+| `PORTKEY_IMAGE` | Optional Compose override for the Portkey container image. The PRD refers to the package name `@portkey-ai/gateway`; this Compose stack defaults to the public Docker image `portkeyai/gateway:latest`. |
 | `PORTKEY_PROVIDER` | Provider header value currently assumed to be `minimax`. |
 | `PORTKEY_CONFIG` | Optional Portkey config object/header value if provider-only routing is not enough. |
 | `DATABASE_PATH` | SQLite database path for student records and token totals. |
@@ -103,9 +103,11 @@ Use dry-run mode for local verification so Minimax is not contacted.
 
 4. Open the dashboard at `http://localhost:3000`.
 
-The Portkey service uses `portkeyai/gateway:latest`, which is the public Docker
-image name documented by Portkey. If Portkey changes packaging, set
-`PORTKEY_IMAGE` in `.env` and rerun `docker compose up --build`.
+The PRD names Portkey as `@portkey-ai/gateway`, which is the package name rather
+than the Docker image reference used by Compose. This stack defaults to the
+public Docker image `portkeyai/gateway:latest`. If Portkey changes packaging or
+your environment requires a pinned internal image, set `PORTKEY_IMAGE` in `.env`
+and rerun `docker compose up --build`.
 
 ### Manual Host Mode
 

@@ -38,7 +38,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Acceptance: FastAPI forwards a valid request to `http://portkey:8787/v1/chat/completions`.
 - [ ] Persist SQLite data across restarts.
   - Acceptance: seeded students and token totals survive `docker compose down` followed by `docker compose up`.
-- [ ] Document Portkey image ambiguity.
+- [x] Document Portkey image ambiguity.
   - Note that the PRD names `@portkey-ai/gateway`, while the public Docker image is commonly published as `portkeyai/gateway`.
   - Acceptance: compose uses a working image name and the README explains how to change it if Portkey updates packaging.
 
