@@ -122,7 +122,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [x] Add Portkey metadata.
   - Include `student_id`, `key_preview`, request tier, and request correlation ID.
   - Hardened target: avoid raw keys and student names in upstream metadata.
-- [ ] Confirm retries do not double-count tokens.
+- [x] Confirm retries do not double-count tokens.
   - Acceptance: token accounting happens once from the final successful OpenAI-style response.
 - [x] Add timeout and upstream error handling.
   - Acceptance: upstream timeouts return clear 502/504-style errors without updating token usage.
@@ -135,7 +135,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [x] Add a missing-usage policy.
   - Default real-upstream policy: reject or quarantine successful responses without usable usage.
   - Acceptance: missing usage cannot silently bypass monthly budgets.
-- [ ] Make SQLite increments atomic.
+- [x] Make SQLite increments atomic.
   - Acceptance: concurrent successful responses do not lose updates.
 - [ ] Add admin token adjustments.
   - Negative deltas restore allowance after a false positive or test.

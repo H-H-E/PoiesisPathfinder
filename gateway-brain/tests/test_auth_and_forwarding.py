@@ -509,6 +509,83 @@ def test_chat_forwarding_records_prompt_and_completion_usage_once(
     assert user["total_tokens_consumed"] == 10
 
 
+def test_final_portkey_response_after_retries_is_accounted_once(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    class RetriedUpstreamAsyncClient:
+        calls = 0
+
+        def __init__(self, *, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> RetriedUpstreamAsyncClient:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def post(
+            self,
+            target: str,
+            *,
+            headers: dict[str, str],
+            json: dict[str, Any],
+        ) -> httpx.Response:
+            RetriedUpstreamAsyncClient.calls += 1
+            return httpx.Response(
+                200,
+                headers={"x-portkey-retry-count": "2"},
+                json={
+                    "id": "chatcmpl-retried",
+                    "object": "chat.completion",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"total_tokens": 11},
+                },
+            )
+
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=False,
+        portkey_base_url="http://portkey:8787",
+        portkey_provider="minimax",
+        PORTKEY_UPSTREAM_API_KEY="master-secret",
+        poiesis_admin_token="admin-token",
+    )
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", RetriedUpstreamAsyncClient)
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: AllowingLimiter()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert RetriedUpstreamAsyncClient.calls == 1
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == 11
+
+
 def test_chat_forwarding_missing_usage_returns_502_without_token_update(
     tmp_path: Path,
     monkeypatch: Any,

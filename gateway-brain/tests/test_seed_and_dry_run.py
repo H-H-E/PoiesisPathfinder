@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import sqlite3
 import sys
@@ -249,6 +250,31 @@ def test_record_token_usage_deactivates_when_ceiling_is_reached(tmp_path: Path) 
     assert user is not None
     assert user["total_tokens_consumed"] == 10
     assert user["is_active"] is False
+
+
+def test_concurrent_token_usage_records_do_not_lose_sqlite_updates(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    increments = [7] * 24
+
+    def record(delta: int) -> int:
+        total, _ = database.record_token_usage(
+            str(database_path),
+            ADA_STUDENT_ID,
+            token_delta=delta,
+            ceiling=1_000_000,
+        )
+        return total
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        totals = list(executor.map(record, increments))
+
+    user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
+    assert user is not None
+    assert user["total_tokens_consumed"] == sum(increments)
+    assert max(totals) == sum(increments)
+    assert user["is_active"] is True
 
 
 def test_dry_run_chat_completion_is_openai_compatible_and_records_usage(
