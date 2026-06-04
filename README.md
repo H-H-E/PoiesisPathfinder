@@ -316,6 +316,18 @@ Full local Gate A readiness also requires a successful dry-run chat request and
 a local spam check that proves the burst limiter blocks the third standard-tier
 request inside 60 seconds.
 
+For a single Gate A smoke run that starts an isolated Compose project, checks
+FastAPI health, confirms the seven seeded dashboard-safe students, loads the
+dashboard, verifies one dry-run chat response, and runs the spam block helper:
+
+```bash
+python3 scripts/docker_smoke.py
+```
+
+The smoke runner forces `DRY_RUN_UPSTREAM=true` for the Compose process so it
+does not contact Minimax. It removes the smoke-test containers and volumes when
+the checks finish unless `--keep-running` is supplied.
+
 ## Troubleshooting
 
 | Symptom | Check |
