@@ -38,6 +38,7 @@ Operator browser
 | `redis` | `docker-compose.yml` | Rolling-window and burst counters | `6379` |
 | `portkey` | `docker-compose.yml` | Provider routing to Minimax | `8787` |
 | `seed_club.py` | `gateway-brain/seed_club.py` | Seeds seven coding-club student keys into SQLite | n/a |
+| `reset_monthly_tokens.py` | `gateway-brain/reset_monthly_tokens.py` | Resets monthly token totals with audit history retained | n/a |
 
 The root `docker-compose.yml` starts Redis, Portkey, the FastAPI gateway, the
 Next.js dashboard, and a one-shot seed job. SQLite data is persisted in the
@@ -295,6 +296,7 @@ python -m py_compile \
   gateway-brain/app/database.py \
   gateway-brain/app/limiter.py \
   gateway-brain/app/main.py \
+  gateway-brain/reset_monthly_tokens.py \
   gateway-brain/seed_club.py
 ```
 

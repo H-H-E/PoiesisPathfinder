@@ -200,6 +200,25 @@ to the product UI.
 4. If the usage is a false positive or rehearsal artifact, apply a negative
    token delta with the reviewed amount, then unlock only if the key is safe.
 
+## Monthly Reset
+
+Run this at the billing boundary after exporting or reviewing the prior
+period's audit feed.
+
+```bash
+cd gateway-brain
+python reset_monthly_tokens.py --database ./data/database.db --period 2026-07
+```
+
+The `--period` value must use `YYYY-MM`. The job sets every student's
+`total_tokens_consumed` to `0` and writes one `/admin/monthly-reset` audit event
+per student with the negative token delta that explains the reset. Existing
+chat, block, override, and incident audit rows remain in `audit_log`.
+
+The job does not automatically unlock inactive students. Review why the student
+is inactive, then unlock from the dashboard only if the key is safe to use in
+the new billing period.
+
 ### Redis Unavailable
 
 1. Expect chat requests to fail closed with HTTP 503.

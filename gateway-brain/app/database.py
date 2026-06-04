@@ -389,6 +389,74 @@ def list_audit_events(
     return [audit_row_to_dict(row) for row in rows]
 
 
+def reset_monthly_token_totals(
+    database_path: str,
+    *,
+    request_id: str,
+    period_label: str,
+) -> list[dict[str, Any]]:
+    now = utc_now()
+    route = "/admin/monthly-reset"
+    reset_rows: list[dict[str, Any]] = []
+    with connect(database_path) as connection:
+        connection.execute("BEGIN IMMEDIATE;")
+        rows = connection.execute(
+            """
+            SELECT student_id, key_preview, student_name, total_tokens_consumed, is_active
+            FROM users
+            ORDER BY student_name ASC
+            """
+        ).fetchall()
+        for row in rows:
+            previous_total = int(row["total_tokens_consumed"])
+            connection.execute(
+                """
+                UPDATE users
+                SET total_tokens_consumed = 0,
+                    updated_at = ?
+                WHERE student_id = ?
+                """,
+                (now, row["student_id"]),
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_log (
+                    request_id,
+                    student_id,
+                    key_preview,
+                    token_delta,
+                    route,
+                    model,
+                    status_code,
+                    error_class,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 200, 'monthly_reset', ?)
+                """,
+                (
+                    request_id,
+                    row["student_id"],
+                    row["key_preview"],
+                    -previous_total,
+                    route,
+                    period_label,
+                    now,
+                ),
+            )
+            reset_rows.append(
+                {
+                    "student_id": row["student_id"],
+                    "student_name": row["student_name"],
+                    "key_preview": row["key_preview"],
+                    "previous_total_tokens_consumed": previous_total,
+                    "total_tokens_consumed": 0,
+                    "is_active": bool(row["is_active"]),
+                }
+            )
+        connection.commit()
+    return reset_rows
+
+
 def set_active(database_path: str, student_id: str, active: bool) -> None:
     now = utc_now()
     with connect(database_path) as connection:

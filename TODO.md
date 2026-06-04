@@ -214,7 +214,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 - [x] Add per-model policy controls.
   - Allow or block specific Minimax models per student.
-- [ ] Add monthly reset job.
+- [x] Add monthly reset job.
   - Reset token totals on a defined billing boundary with audit history retained.
 - [x] Add request body size limits.
   - Prevent accidental giant context submissions.
