@@ -22,7 +22,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [x] Add a contributor-safe `.env.example`.
   - Include `MINIMAX_API_KEY`, `PORTKEY_PROVIDER`, `PORTKEY_CONFIG`, `POIESIS_ADMIN_TOKEN`, `DRY_RUN_UPSTREAM`, and dashboard/backend URLs.
   - Do not commit real API keys.
-- [ ] Add a root `README.md`.
+- [x] Add a root `README.md`.
   - Explain the network flow, local startup, dry-run mode, real Minimax mode, dashboard access, and troubleshooting.
 - [x] Add `.gitignore`.
   - Ignore SQLite files, Redis dumps, Python caches, `node_modules`, Next build output, and local env files.

@@ -47,9 +47,12 @@ export default function DashboardClient() {
   }, []);
 
   useEffect(() => {
-    void fetchUsers();
+    const initial = window.setTimeout(() => void fetchUsers(), 0);
     const timer = window.setInterval(() => void fetchUsers(), 4000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
   }, [fetchUsers]);
 
   const totals = useMemo(() => {

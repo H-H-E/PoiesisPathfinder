@@ -1,0 +1,235 @@
+# PoiesisPathfinder
+
+PoiesisPathfinder is a local AI governance gateway for a coding-club Minimax
+deployment. Student clients such as Hermes send OpenAI-compatible chat requests
+to a FastAPI gateway, the gateway enforces identity, rate limits, and token
+budgets, then forwards allowed requests through Portkey to Minimax.
+
+The repository is still in a pre-release state. Dry-run mode is the safe local
+path today. Real Minimax traffic should wait until the release gates in
+`TODO.md` and `reports/engineering-hardening-plan.md` are satisfied.
+
+## Network Flow
+
+```text
+Hermes or OpenAI-compatible client
+  -> POST /v1/chat/completions with Authorization: Bearer sk-poiesis-...
+  -> gateway-brain FastAPI service on port 8000
+  -> SQLite user and token-budget state
+  -> Redis rolling-window and burst quota state
+  -> Portkey gateway at /v1/chat/completions
+  -> Minimax API
+
+Operator browser
+  -> dashboard Next.js app on port 3000
+  -> dashboard /api routes
+  -> FastAPI /admin routes with POIESIS_ADMIN_TOKEN attached server-side
+```
+
+## Services
+
+| Service | Path | Purpose | Default port |
+| --- | --- | --- | --- |
+| `gateway-brain` | `gateway-brain/` | FastAPI governance brain, student auth, quota checks, token accounting, Portkey forwarding | `8000` |
+| `dashboard` | `dashboard/` | Next.js operator dashboard and admin proxy routes | `3000` |
+| `redis` | external or future compose service | Rolling-window and burst counters | `6379` |
+| `portkey` | external or future compose service | Provider routing to Minimax | `8787` |
+| `seed_club.py` | `gateway-brain/seed_club.py` | Seeds seven coding-club student keys into SQLite | n/a |
+
+Root Docker Compose orchestration is the next backlog milestone and is not
+present yet. Until `docker-compose.yml` lands, run the services manually or wire
+equivalent containers from the existing Dockerfiles.
+
+## Configuration
+
+Start from the contributor-safe template:
+
+```bash
+cp .env.example .env
+```
+
+Important variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `MINIMAX_API_KEY` | Master upstream key used by FastAPI when forwarding through Portkey. Never use a student key here. |
+| `PORTKEY_BASE_URL` | Portkey gateway URL. Use `http://localhost:8787` for manual local Portkey, or `http://portkey:8787` inside Docker. |
+| `PORTKEY_PROVIDER` | Provider header value currently assumed to be `minimax`. |
+| `PORTKEY_CONFIG` | Optional Portkey config object/header value if provider-only routing is not enough. |
+| `DATABASE_PATH` | SQLite database path for student records and token totals. |
+| `REDIS_URL` | Redis connection URL. |
+| `POIESIS_ADMIN_TOKEN` | Token required by dashboard server routes when calling FastAPI admin endpoints. The current backend only enforces admin auth when this is set, so set it for any shared environment. |
+| `DRY_RUN_UPSTREAM` | `true` returns local OpenAI-shaped responses without contacting Portkey or Minimax. |
+| `ALLOW_STREAMING` | Defaults to `false`; streaming is blocked because accounting needs the final `usage` block. |
+
+## Local Startup
+
+Use dry-run mode for local verification so Minimax is not contacted.
+
+1. Create and edit local environment:
+
+   ```bash
+   cp .env.example .env
+   cp .env gateway-brain/.env
+   ```
+
+   The backend loads `.env` from the directory where `uvicorn` is started. The
+   second copy keeps manual `cd gateway-brain` commands aligned with the root
+   template. For manual host-mode startup, set:
+
+   ```dotenv
+   DRY_RUN_UPSTREAM=true
+   REDIS_URL=redis://localhost:6379/0
+   PORTKEY_BASE_URL=http://localhost:8787
+   GATEWAY_BRAIN_URL=http://localhost:8000
+   POIESIS_ADMIN_TOKEN=replace-with-local-admin-token
+   ```
+
+2. Start Redis:
+
+   ```bash
+   docker run --rm -p 6379:6379 redis:7-alpine
+   ```
+
+3. Seed the seven local-demo student keys:
+
+   ```bash
+   cd gateway-brain
+   python -m venv .venv
+   . .venv/bin/activate
+   pip install -r requirements.txt
+   python seed_club.py --database ./data/database.db
+   ```
+
+   For non-demo keys, run `python seed_club.py --random` and distribute the
+   printed keys out-of-band.
+
+4. Start the FastAPI gateway:
+
+   ```bash
+   cd gateway-brain
+   . .venv/bin/activate
+   DRY_RUN_UPSTREAM=true REDIS_URL=redis://localhost:6379/0 uvicorn app.main:app --host 0.0.0.0 --port 8000
+   ```
+
+5. Start the dashboard:
+
+   ```bash
+   cd dashboard
+   npm install
+   GATEWAY_BRAIN_URL=http://localhost:8000 POIESIS_ADMIN_TOKEN=replace-with-local-admin-token npm run dev
+   ```
+
+6. Open the dashboard at `http://localhost:3000`.
+
+## Dry-Run Chat Check
+
+Use one of the seeded demo keys from `gateway-brain/seed_club.py`:
+
+```bash
+curl -sS http://localhost:8000/v1/chat/completions \
+  -H 'Authorization: Bearer sk-poiesis-ada-7f3c9d2a' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "dry-run-minimax",
+    "messages": [
+      { "role": "user", "content": "Say hello from dry-run mode." }
+    ]
+  }'
+```
+
+Expected result: an OpenAI-shaped JSON response whose message says it is a
+PoiesisPathfinder dry-run response and whose `usage.total_tokens` is present.
+
+The standard tier has a short burst limit of 2 requests per 60 seconds. A third
+quick request with the same key should return HTTP 429.
+
+## Real Minimax Mode
+
+Real upstream traffic requires external credentials and should only be enabled
+after the dry-run gate passes.
+
+1. Set a real master upstream key:
+
+   ```dotenv
+   DRY_RUN_UPSTREAM=false
+   MINIMAX_API_KEY=...
+   PORTKEY_BASE_URL=http://localhost:8787
+   PORTKEY_PROVIDER=minimax
+   ```
+
+2. Start Portkey so the gateway can reach
+   `${PORTKEY_BASE_URL}/v1/chat/completions`.
+
+3. Send one controlled request through FastAPI and inspect:
+
+   - Portkey accepts the configured Minimax provider or config.
+   - The upstream response includes OpenAI-style `usage`.
+   - Student `Authorization` credentials are not forwarded upstream.
+   - Non-2xx and timeout responses do not increment local token totals.
+
+Do not run broad real-traffic tests until Gate B and Gate C from `TODO.md` are
+implemented.
+
+## Dashboard Access
+
+The dashboard is a dense operator console for the seven seeded student records.
+It polls `/api/users`, which proxies to FastAPI `/admin/users`. Mutation routes
+reset rate windows, lock or unlock keys, and apply token deltas through the
+dashboard server so `POIESIS_ADMIN_TOKEN` stays server-side.
+
+Current hardening caveat: FastAPI admin routes fail open if
+`POIESIS_ADMIN_TOKEN` is missing. Always set the token in local shared, staging,
+or production-like environments.
+
+## Verification Commands
+
+Run the checks that match the area you changed:
+
+```bash
+python -m py_compile \
+  gateway-brain/app/__init__.py \
+  gateway-brain/app/config.py \
+  gateway-brain/app/database.py \
+  gateway-brain/app/limiter.py \
+  gateway-brain/app/main.py \
+  gateway-brain/seed_club.py
+```
+
+```bash
+cd dashboard
+npm ci
+npm run lint
+npm run build
+```
+
+Full local deployment readiness is not complete until a root `docker-compose.yml`
+exists and `docker compose up --build` can start Redis, FastAPI, Portkey, the
+dashboard, and a one-shot seed job.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `GET /health` fails or hangs | Confirm Redis is running and `REDIS_URL` points at the reachable host. |
+| Dashboard shows a gateway alert | Confirm `GATEWAY_BRAIN_URL` points at FastAPI and `POIESIS_ADMIN_TOKEN` matches the backend. |
+| Chat returns HTTP 401 | Confirm the client sends `Authorization: Bearer sk-poiesis-...` and that the key was seeded and is active. |
+| Chat returns HTTP 403 | The monthly token ceiling has been reached and the key is locked. |
+| Chat returns HTTP 429 | The five-hour or burst window is exhausted. Wait for the reset window or use an admin reset in local testing. |
+| `stream: true` returns HTTP 400 | Streaming is disabled until streaming usage accounting is implemented. |
+| Real upstream returns HTTP 503 | Set `MINIMAX_API_KEY` or `PORTKEY_UPSTREAM_API_KEY` and confirm Portkey is reachable. |
+| Token totals do not move in real mode | Confirm the upstream response has OpenAI-compatible `usage.total_tokens`. Missing-usage handling is a pre-release hardening item. |
+
+## Release Gates
+
+Before real club traffic, complete the gates tracked in `TODO.md`:
+
+- Gate A: dry-run local system with compose, seed job, dashboard, dry-run chat,
+  and local spam block.
+- Gate B: security baseline for admin auth, raw key handling, Redis key names,
+  and request correlation IDs.
+- Gate C: quota integrity for atomic multi-window limits, missing usage, races,
+  and immediate monthly lockout.
+- Gate D: one controlled real Portkey/Minimax probe.
+- Gate E: operator runbook for start, verify, monitor, reset, lock, rotate, and
+  recover procedures.
