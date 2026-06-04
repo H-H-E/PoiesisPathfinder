@@ -44,7 +44,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 ## Milestone 2: Student Key Seeding
 
-- [ ] Seed exactly seven initial student records.
+- [x] Seed exactly seven initial student records.
   - Acceptance: every record has `virtual_key`, `student_name`, `total_tokens_consumed = 0`, and `is_active = true`.
 - [ ] Support secure key regeneration.
   - Acceptance: `python seed_club.py --random` creates seven non-demo keys without printing secrets anywhere except the operator terminal.
@@ -71,12 +71,12 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Acceptance: when a user reaches the ceiling, `is_active` flips false and future requests return HTTP 403.
 - [ ] Deactivate immediately when a successful response crosses the monthly ceiling.
   - Acceptance: post-hook token increment and cap lockout happen in one SQLite transaction.
-- [ ] Preserve the OpenAI-compatible request path.
+- [x] Preserve the OpenAI-compatible request path.
   - Endpoint: `POST /v1/chat/completions`.
   - Acceptance: Hermes can use the gateway as an OpenAI-compatible base URL.
 - [ ] Add request body and message-shape limits.
   - Acceptance: oversized or malformed chat payloads are rejected before rate-limit recording.
-- [ ] Block unsupported streaming by default.
+- [x] Block unsupported streaming by default.
   - Reason: post-response accounting needs a final `usage` block.
   - Acceptance: `stream: true` returns HTTP 400 unless streaming accounting is explicitly implemented.
 - [ ] Derive request tier from server-side policy.

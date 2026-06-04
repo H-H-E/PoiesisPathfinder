@@ -237,6 +237,12 @@ python -m py_compile \
 ```
 
 ```bash
+cd gateway-brain
+python -m pip install -r requirements-dev.txt
+python -m pytest
+```
+
+```bash
 cd dashboard
 npm ci
 npm run lint
