@@ -90,13 +90,13 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 - [x] Replace two-step limiter recording with an atomic multi-window operation.
   - Acceptance: five-hour and burst windows are both checked first, then both recorded only if both pass.
-- [ ] Enforce the standard five-hour window.
+- [x] Enforce the standard five-hour window.
   - Limit: `642` requests per `18,000` seconds per user.
   - Acceptance: the 643rd request in the window returns HTTP 429.
-- [ ] Enforce the high-speed five-hour window.
+- [x] Enforce the high-speed five-hour window.
   - Limit: `321` requests per `18,000` seconds per user.
   - Acceptance: the 322nd high-speed request returns HTTP 429.
-- [ ] Keep a short burst guardrail.
+- [x] Keep a short burst guardrail.
   - Standard: 2 requests per minute.
   - High-speed: 1 request per minute.
   - Acceptance: runaway loops are blocked quickly in local curl verification.
