@@ -57,7 +57,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 - [x] Fail closed when admin auth is not configured.
   - Acceptance: admin routes are protected unless an explicit insecure-development flag is set.
-- [ ] Harden pre-flight authentication.
+- [x] Harden pre-flight authentication.
   - Verify `Authorization: Bearer sk-poiesis-...`.
   - Reject missing, malformed, unknown, or inactive keys with HTTP 401.
   - Acceptance: no student key is forwarded to Portkey.

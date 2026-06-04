@@ -19,6 +19,9 @@ from app.config import Settings, get_settings
 from app.limiter import LimitStatus, SlidingWindowLimiter
 
 
+STUDENT_KEY_PREFIX = "sk-poiesis-"
+
+
 class ResetWindowPayload(BaseModel):
     tier: Literal["standard", "high-speed", "all"] = "standard"
     include_burst: bool = True
@@ -80,7 +83,13 @@ def parse_bearer_token(authorization: str | None) -> str:
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="Expected Authorization: Bearer <virtual_key>.")
-    return token.strip()
+    token = token.strip()
+    if not token.startswith(STUDENT_KEY_PREFIX) or token == STUDENT_KEY_PREFIX:
+        raise HTTPException(
+            status_code=401,
+            detail="Expected Authorization: Bearer sk-poiesis-...",
+        )
+    return token
 
 
 def require_admin(
