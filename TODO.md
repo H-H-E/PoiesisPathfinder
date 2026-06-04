@@ -81,7 +81,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Acceptance: `stream: true` returns HTTP 400 unless streaming accounting is explicitly implemented.
 - [x] Derive request tier from server-side policy.
   - Acceptance: production mode does not trust student-provided tier headers or payload fields.
-- [ ] Add structured error payloads.
+- [x] Add structured error payloads.
   - Include `message`, `key_preview`, `limit`, `remaining`, `reset_after_seconds`, and `scope` where applicable.
 - [ ] Add request correlation IDs.
   - Acceptance: each proxied request has a log-visible ID shared across FastAPI logs and Portkey metadata.

@@ -109,7 +109,7 @@ def test_redis_unavailability_fails_closed_with_503() -> None:
                 tier="standard",
             )
         assert exc_info.value.status_code == 503
-        assert "not forwarded" in exc_info.value.detail
+        assert "not forwarded" in exc_info.value.detail["message"]
 
     asyncio.run(scenario())
 

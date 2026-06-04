@@ -75,21 +75,48 @@ app.add_middleware(
 )
 
 
+def error_detail(message: str, *, key_preview: str | None = None, **fields: Any) -> dict[str, Any]:
+    detail: dict[str, Any] = {"message": message}
+    if key_preview:
+        detail["key_preview"] = key_preview
+    for key, value in fields.items():
+        if value is not None:
+            detail[key] = value
+    return detail
+
+
+def normalize_error_detail(detail: Any) -> dict[str, Any]:
+    if isinstance(detail, dict):
+        if "message" in detail:
+            return detail
+        return {"message": str(detail)}
+    return error_detail(str(detail))
+
+
+@app.exception_handler(HTTPException)
+async def structured_http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": normalize_error_detail(exc.detail)},
+        headers=exc.headers,
+    )
+
+
 def limiter_from_state(request: Request) -> SlidingWindowLimiter:
     return request.app.state.limiter
 
 
 def parse_bearer_token(authorization: str | None) -> str:
     if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization bearer token.")
+        raise HTTPException(status_code=401, detail=error_detail("Missing Authorization bearer token."))
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=401, detail="Expected Authorization: Bearer <student_key>.")
+        raise HTTPException(status_code=401, detail=error_detail("Expected Authorization: Bearer <student_key>."))
     token = token.strip()
     if not token.startswith(STUDENT_KEY_PREFIX) or token == STUDENT_KEY_PREFIX:
         raise HTTPException(
             status_code=401,
-            detail="Expected Authorization: Bearer sk-poiesis-...",
+            detail=error_detail("Expected Authorization: Bearer sk-poiesis-..."),
         )
     return token
 
@@ -103,10 +130,10 @@ def require_admin(
     if not settings.poiesis_admin_token:
         raise HTTPException(
             status_code=503,
-            detail="Admin authentication is not configured.",
+            detail=error_detail("Admin authentication is not configured."),
         )
     if x_admin_token != settings.poiesis_admin_token:
-        raise HTTPException(status_code=401, detail="Missing or invalid admin token.")
+        raise HTTPException(status_code=401, detail=error_detail("Missing or invalid admin token."))
 
 
 def usage_total_tokens(payload: dict[str, Any]) -> int:
@@ -122,7 +149,12 @@ def usage_total_tokens(payload: dict[str, Any]) -> int:
     return max(prompt_tokens + completion_tokens, 0)
 
 
-async def read_limited_json_body(request: Request, settings: Settings) -> dict[str, Any]:
+async def read_limited_json_body(
+    request: Request,
+    settings: Settings,
+    *,
+    key_preview: str | None = None,
+) -> dict[str, Any]:
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -132,68 +164,115 @@ async def read_limited_json_body(request: Request, settings: Settings) -> dict[s
         if declared_size > settings.max_request_body_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"Request body exceeds {settings.max_request_body_bytes} bytes.",
+                detail=error_detail(
+                    f"Request body exceeds {settings.max_request_body_bytes} bytes.",
+                    key_preview=key_preview,
+                ),
             )
 
     body = await request.body()
     if len(body) > settings.max_request_body_bytes:
         raise HTTPException(
             status_code=413,
-            detail=f"Request body exceeds {settings.max_request_body_bytes} bytes.",
+            detail=error_detail(
+                f"Request body exceeds {settings.max_request_body_bytes} bytes.",
+                key_preview=key_preview,
+            ),
         )
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Request body must be valid JSON.") from exc
+        raise HTTPException(
+            status_code=400,
+            detail=error_detail("Request body must be valid JSON.", key_preview=key_preview),
+        ) from exc
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Request body must be a JSON object.")
-    validate_chat_payload(payload, settings)
+        raise HTTPException(
+            status_code=400,
+            detail=error_detail("Request body must be a JSON object.", key_preview=key_preview),
+        )
+    validate_chat_payload(payload, settings, key_preview=key_preview)
     return payload
 
 
-def validate_chat_payload(payload: dict[str, Any], settings: Settings) -> None:
+def validate_chat_payload(
+    payload: dict[str, Any],
+    settings: Settings,
+    *,
+    key_preview: str | None = None,
+) -> None:
     model = payload.get("model")
     if not isinstance(model, str) or not model.strip():
-        raise HTTPException(status_code=400, detail="Request body must include a non-empty string model.")
+        raise HTTPException(
+            status_code=400,
+            detail=error_detail(
+                "Request body must include a non-empty string model.",
+                key_preview=key_preview,
+            ),
+        )
 
     messages = payload.get("messages")
     if not isinstance(messages, list) or not messages:
-        raise HTTPException(status_code=400, detail="Request body must include a non-empty messages list.")
+        raise HTTPException(
+            status_code=400,
+            detail=error_detail(
+                "Request body must include a non-empty messages list.",
+                key_preview=key_preview,
+            ),
+        )
     if len(messages) > settings.max_messages:
         raise HTTPException(
             status_code=413,
-            detail=f"messages exceeds the limit of {settings.max_messages}.",
+            detail=error_detail(
+                f"messages exceeds the limit of {settings.max_messages}.",
+                key_preview=key_preview,
+                limit=settings.max_messages,
+            ),
         )
 
     total_content_chars = 0
     for index, message in enumerate(messages):
         if not isinstance(message, dict):
-            raise HTTPException(status_code=400, detail=f"messages[{index}] must be an object.")
+            raise HTTPException(
+                status_code=400,
+                detail=error_detail(f"messages[{index}] must be an object.", key_preview=key_preview),
+            )
 
         role = message.get("role")
         if not isinstance(role, str) or role not in VALID_CHAT_ROLES:
             raise HTTPException(
                 status_code=400,
-                detail=f"messages[{index}].role must be one of: assistant, system, tool, user.",
+                detail=error_detail(
+                    f"messages[{index}].role must be one of: assistant, system, tool, user.",
+                    key_preview=key_preview,
+                ),
             )
 
         content = message.get("content")
-        content_chars = chat_content_size(content, index)
+        content_chars = chat_content_size(content, index, key_preview=key_preview)
         if content_chars > settings.max_message_content_chars:
             raise HTTPException(
                 status_code=413,
-                detail=f"messages[{index}].content exceeds {settings.max_message_content_chars} characters.",
+                detail=error_detail(
+                    f"messages[{index}].content exceeds {settings.max_message_content_chars} characters.",
+                    key_preview=key_preview,
+                    limit=settings.max_message_content_chars,
+                ),
             )
         total_content_chars += content_chars
 
     if total_content_chars > settings.max_total_message_content_chars:
         raise HTTPException(
             status_code=413,
-            detail=f"messages content exceeds {settings.max_total_message_content_chars} total characters.",
+            detail=error_detail(
+                f"messages content exceeds {settings.max_total_message_content_chars} total characters.",
+                key_preview=key_preview,
+                limit=settings.max_total_message_content_chars,
+            ),
         )
 
 
-def chat_content_size(content: Any, message_index: int) -> int:
+def chat_content_size(content: Any, message_index: int, *, key_preview: str | None = None) -> int:
     if content is None:
         return 0
     if isinstance(content, str):
@@ -203,12 +282,18 @@ def chat_content_size(content: Any, message_index: int) -> int:
             if not isinstance(part, dict):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"messages[{message_index}].content[{part_index}] must be an object.",
+                    detail=error_detail(
+                        f"messages[{message_index}].content[{part_index}] must be an object.",
+                        key_preview=key_preview,
+                    ),
                 )
         return len(json.dumps(content, separators=(",", ":"), ensure_ascii=False))
     raise HTTPException(
         status_code=400,
-        detail=f"messages[{message_index}].content must be a string, list, or null.",
+        detail=error_detail(
+            f"messages[{message_index}].content must be a string, list, or null.",
+            key_preview=key_preview,
+        ),
     )
 
 
@@ -249,6 +334,7 @@ async def enforce_rate_limits(
     limiter: SlidingWindowLimiter,
     settings: Settings,
     identity: str,
+    key_preview: str | None = None,
     tier: str,
 ) -> None:
     try:
@@ -263,28 +349,32 @@ async def enforce_rate_limits(
     except RedisError as exc:
         raise HTTPException(
             status_code=503,
-            detail="Rate limiter unavailable; request was not forwarded.",
+            detail=error_detail(
+                "Rate limiter unavailable; request was not forwarded.",
+                key_preview=key_preview,
+            ),
         ) from exc
     if not long_window.allowed:
-        raise_rate_limit_error(long_window)
+        raise_rate_limit_error(long_window, key_preview=key_preview)
 
     if not burst_window.allowed:
-        raise_rate_limit_error(burst_window)
+        raise_rate_limit_error(burst_window, key_preview=key_preview)
 
 
-def raise_rate_limit_error(status: LimitStatus) -> None:
+def raise_rate_limit_error(status: LimitStatus, *, key_preview: str | None = None) -> None:
     label = "5-hour rolling window" if status.scope == "window" else "burst window"
     raise HTTPException(
         status_code=429,
-        detail={
-            "message": f"Rate limit exceeded. Too many requests in the {label}.",
-            "tier": status.tier,
-            "scope": status.scope,
-            "limit": status.limit,
-            "count": status.count,
-            "remaining": status.remaining,
-            "reset_after_seconds": status.reset_after_seconds,
-        },
+        detail=error_detail(
+            f"Rate limit exceeded. Too many requests in the {label}.",
+            key_preview=key_preview,
+            tier=status.tier,
+            scope=status.scope,
+            limit=status.limit,
+            count=status.count,
+            remaining=status.remaining,
+            reset_after_seconds=status.reset_after_seconds,
+        ),
     )
 
 
@@ -299,7 +389,10 @@ async def forward_to_portkey(
     if not settings.portkey_upstream_api_key:
         raise HTTPException(
             status_code=503,
-            detail="Missing MINIMAX_API_KEY or PORTKEY_UPSTREAM_API_KEY for Portkey forwarding.",
+            detail=error_detail(
+                "Missing MINIMAX_API_KEY or PORTKEY_UPSTREAM_API_KEY for Portkey forwarding.",
+                key_preview=key_preview,
+            ),
         )
 
     headers = {
@@ -402,22 +495,35 @@ async def chat_completions(
         settings.poiesis_key_hash_secret,
     )
     if user is None:
-        raise HTTPException(status_code=401, detail="Unknown or inactive virtual key.")
+        raise HTTPException(status_code=401, detail=error_detail("Unknown or inactive virtual key."))
 
     student_id = str(user["student_id"])
+    key_preview = str(user["key_preview"])
     if not user["is_active"]:
         if int(user["total_tokens_consumed"]) >= settings.monthly_token_ceiling:
-            raise HTTPException(status_code=403, detail="Monthly token budget spent.")
-        raise HTTPException(status_code=401, detail="Unknown or inactive virtual key.")
+            raise HTTPException(
+                status_code=403,
+                detail=error_detail("Monthly token budget spent.", key_preview=key_preview),
+            )
+        raise HTTPException(
+            status_code=401,
+            detail=error_detail("Unknown or inactive virtual key.", key_preview=key_preview),
+        )
 
     if database.deactivate_if_spent(settings.database_path, student_id, settings.monthly_token_ceiling):
-        raise HTTPException(status_code=403, detail="Monthly token budget spent.")
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail("Monthly token budget spent.", key_preview=key_preview),
+        )
 
-    payload = await read_limited_json_body(request, settings)
+    payload = await read_limited_json_body(request, settings, key_preview=key_preview)
     if payload.get("stream") is True and not settings.allow_streaming:
         raise HTTPException(
             status_code=400,
-            detail="Streaming is disabled because usage accounting requires the final OpenAI usage block.",
+            detail=error_detail(
+                "Streaming is disabled because usage accounting requires the final OpenAI usage block.",
+                key_preview=key_preview,
+            ),
         )
 
     tier = settings.request_tier_for_student(student_id)
@@ -428,6 +534,7 @@ async def chat_completions(
         limiter=limiter,
         settings=settings,
         identity=student_id,
+        key_preview=key_preview,
         tier=tier,
     )
 
@@ -447,7 +554,7 @@ async def chat_completions(
         payload=payload,
         settings=settings,
         student_id=student_id,
-        key_preview=str(user["key_preview"]),
+        key_preview=key_preview,
         tier=tier,
     )
 
@@ -504,7 +611,7 @@ async def reset_user_window(
 ) -> dict[str, Any]:
     user = database.get_user_by_student_id(settings.database_path, student_id)
     if user is None:
-        raise HTTPException(status_code=404, detail="Unknown student ID.")
+        raise HTTPException(status_code=404, detail=error_detail("Unknown student ID."))
     tiers = ["standard", "high-speed"] if payload.tier == "all" else [payload.tier]
     deleted = 0
     for tier in tiers:
@@ -524,7 +631,7 @@ async def adjust_tokens(
 ) -> dict[str, Any]:
     user = database.get_user_by_student_id(settings.database_path, student_id)
     if user is None:
-        raise HTTPException(status_code=404, detail="Unknown student ID.")
+        raise HTTPException(status_code=404, detail=error_detail("Unknown student ID."))
     total = database.increment_tokens(settings.database_path, student_id, payload.delta_tokens)
     return {
         "ok": True,
@@ -543,6 +650,6 @@ async def set_user_active(
 ) -> dict[str, Any]:
     user = database.get_user_by_student_id(settings.database_path, student_id)
     if user is None:
-        raise HTTPException(status_code=404, detail="Unknown student ID.")
+        raise HTTPException(status_code=404, detail=error_detail("Unknown student ID."))
     database.set_active(settings.database_path, student_id, payload.is_active)
     return {"ok": True, "student_id": student_id, "key_preview": user["key_preview"], "is_active": payload.is_active}

@@ -85,6 +85,45 @@ class AllowingLimiter:
         )
 
 
+class BlockingLimiter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def check_and_record_window_and_burst(
+        self,
+        *,
+        identity: str,
+        tier: str,
+        window_seconds: int,
+        window_limit: int,
+        burst_seconds: int,
+        burst_limit: int,
+    ) -> tuple[LimitStatus, LimitStatus]:
+        self.calls += 1
+        return (
+            LimitStatus(
+                scope="window",
+                tier=tier,
+                allowed=False,
+                count=window_limit,
+                limit=window_limit,
+                remaining=0,
+                reset_after_seconds=42,
+                window_seconds=window_seconds,
+            ),
+            LimitStatus(
+                scope="burst",
+                tier=tier,
+                allowed=True,
+                count=1,
+                limit=burst_limit,
+                remaining=burst_limit - 1,
+                reset_after_seconds=0,
+                window_seconds=burst_seconds,
+            ),
+        )
+
+
 def test_seed_script_creates_exactly_seven_active_students(
     tmp_path: Path,
     monkeypatch: Any,
@@ -371,7 +410,9 @@ def test_dry_run_completion_that_crosses_ceiling_locks_future_requests(
     assert first_response.status_code == 200
     assert first_response.json()["usage"]["total_tokens"] >= settings.monthly_token_ceiling
     assert second_response.status_code == 403
-    assert second_response.json()["detail"] == "Monthly token budget spent."
+    spent_detail = second_response.json()["detail"]
+    assert spent_detail["message"] == "Monthly token budget spent."
+    assert spent_detail["key_preview"] == database.key_preview(ADA_KEY)
     assert limiter.calls == 1
 
     user = database.get_user_by_student_id(str(database_path), ADA_STUDENT_ID)
@@ -409,8 +450,49 @@ def test_streaming_is_rejected_before_rate_limit_recording(tmp_path: Path) -> No
         app.dependency_overrides.clear()
 
     assert response.status_code == 400
-    assert "Streaming is disabled" in response.json()["detail"]
+    stream_detail = response.json()["detail"]
+    assert "Streaming is disabled" in stream_detail["message"]
+    assert stream_detail["key_preview"] == database.key_preview(ADA_KEY)
     assert limiter.calls == 0
+
+
+def test_rate_limit_error_payload_is_structured_with_key_preview(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database_path),
+        dry_run_upstream=True,
+        standard_window_limit=2,
+        poiesis_admin_token="admin-token",
+    )
+
+    limiter = BlockingLimiter()
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    app.dependency_overrides[limiter_from_state] = lambda: limiter
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
+            json={
+                "model": "dry-run-minimax",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 429
+    detail = response.json()["detail"]
+    assert detail["message"].startswith("Rate limit exceeded.")
+    assert detail["key_preview"] == database.key_preview(ADA_KEY)
+    assert detail["scope"] == "window"
+    assert detail["limit"] == settings.standard_window_limit
+    assert detail["remaining"] == 0
+    assert detail["reset_after_seconds"] == 42
+    assert limiter.calls == 1
 
 
 def test_malformed_messages_are_rejected_before_rate_limit_recording(tmp_path: Path) -> None:
@@ -438,7 +520,9 @@ def test_malformed_messages_are_rejected_before_rate_limit_recording(tmp_path: P
         app.dependency_overrides.clear()
 
     assert response.status_code == 400
-    assert "messages list" in response.json()["detail"]
+    malformed_detail = response.json()["detail"]
+    assert "messages list" in malformed_detail["message"]
+    assert malformed_detail["key_preview"] == database.key_preview(ADA_KEY)
     assert limiter.calls == 0
 
 
@@ -471,7 +555,9 @@ def test_oversized_request_body_is_rejected_before_rate_limit_recording(tmp_path
         app.dependency_overrides.clear()
 
     assert response.status_code == 413
-    assert "Request body exceeds" in response.json()["detail"]
+    body_detail = response.json()["detail"]
+    assert "Request body exceeds" in body_detail["message"]
+    assert body_detail["key_preview"] == database.key_preview(ADA_KEY)
     assert limiter.calls == 0
 
 
@@ -506,5 +592,8 @@ def test_oversized_message_content_is_rejected_before_rate_limit_recording(
         app.dependency_overrides.clear()
 
     assert response.status_code == 413
-    assert "content exceeds" in response.json()["detail"]
+    content_detail = response.json()["detail"]
+    assert "content exceeds" in content_detail["message"]
+    assert content_detail["key_preview"] == database.key_preview(ADA_KEY)
+    assert content_detail["limit"] == settings.max_message_content_chars
     assert limiter.calls == 0
