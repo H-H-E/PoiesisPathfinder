@@ -106,7 +106,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Acceptance: idle user rate-limit keys disappear after the rolling window plus cleanup buffer.
 - [x] Fail closed on Redis unavailability.
   - Acceptance: Redis connection errors return HTTP 503 and do not forward to Portkey.
-- [ ] Add admin reset endpoints.
+- [x] Add admin reset endpoints.
   - Reset standard window, high-speed window, or all windows for one student.
 
 ## Milestone 5: Portkey and Minimax Forwarding

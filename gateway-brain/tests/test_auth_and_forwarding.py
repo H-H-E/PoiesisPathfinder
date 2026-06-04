@@ -102,6 +102,22 @@ class AllowingLimiter:
         )
 
 
+class ResetRecordingLimiter(AllowingLimiter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.reset_calls: list[dict[str, Any]] = []
+
+    async def reset(self, *, identity: str, tier: str, include_burst: bool = True) -> int:
+        self.reset_calls.append(
+            {
+                "identity": identity,
+                "tier": tier,
+                "include_burst": include_burst,
+            }
+        )
+        return 1
+
+
 def _client_for_database(
     database_path: Path,
     limiter: AllowingLimiter | None = None,
@@ -188,6 +204,89 @@ def test_admin_users_payload_hides_raw_keys_and_hashes(tmp_path: Path) -> None:
     assert "virtual_key_hash" not in ada
     assert ADA_STUDENT_ID in limiter.peek_identities
     assert ADA_KEY not in limiter.peek_identities
+
+
+def test_admin_reset_window_endpoint_resets_standard_high_speed_or_all_windows(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    limiter = ResetRecordingLimiter()
+
+    try:
+        client = _client_for_database(database_path, limiter)
+        standard_response = client.post(
+            f"/admin/users/{ADA_STUDENT_ID}/reset-window",
+            headers={"x-admin-token": "admin-token"},
+            json={"tier": "standard", "include_burst": False},
+        )
+        high_speed_response = client.post(
+            f"/admin/users/{ADA_STUDENT_ID}/reset-window",
+            headers={"x-admin-token": "admin-token"},
+            json={"tier": "high-speed"},
+        )
+        all_response = client.post(
+            f"/admin/users/{ADA_STUDENT_ID}/reset-window",
+            headers={"x-admin-token": "admin-token"},
+            json={"tier": "all", "include_burst": True},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert standard_response.status_code == 200
+    assert high_speed_response.status_code == 200
+    assert all_response.status_code == 200
+    assert standard_response.json()["deleted_keys"] == 1
+    assert high_speed_response.json()["deleted_keys"] == 1
+    assert all_response.json()["deleted_keys"] == 2
+    assert all_response.json()["student_id"] == ADA_STUDENT_ID
+    assert all_response.json()["key_preview"] == database.key_preview(ADA_KEY)
+    assert limiter.reset_calls == [
+        {
+            "identity": ADA_STUDENT_ID,
+            "tier": "standard",
+            "include_burst": False,
+        },
+        {
+            "identity": ADA_STUDENT_ID,
+            "tier": "high-speed",
+            "include_burst": True,
+        },
+        {
+            "identity": ADA_STUDENT_ID,
+            "tier": "standard",
+            "include_burst": True,
+        },
+        {
+            "identity": ADA_STUDENT_ID,
+            "tier": "high-speed",
+            "include_burst": True,
+        },
+    ]
+
+
+def test_admin_reset_window_endpoint_rejects_unknown_student_without_reset(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    limiter = ResetRecordingLimiter()
+
+    try:
+        client = _client_for_database(database_path, limiter)
+        response = client.post(
+            "/admin/users/stu-missing/reset-window",
+            headers={"x-admin-token": "admin-token"},
+            json={"tier": "all"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["message"] == "Unknown student ID."
+    assert limiter.reset_calls == []
 
 
 def test_forward_to_portkey_uses_master_credential_not_student_key(
