@@ -223,6 +223,7 @@ def record_audit_event_safe(
     model: str | None,
     status_code: int,
     error_class: str | None,
+    upstream_latency_ms: int | None = None,
 ) -> None:
     try:
         database.record_audit_event(
@@ -235,6 +236,7 @@ def record_audit_event_safe(
             model=model,
             status_code=status_code,
             error_class=error_class,
+            upstream_latency_ms=upstream_latency_ms,
         )
     except Exception:
         logger.exception("audit log write failed request_id=%s student_id=%s", request_id, student_id)
@@ -438,6 +440,117 @@ def record_semantic_loop_signal(
         status_code=200,
         error_class="semantic_loop_detected",
     )
+
+
+def prometheus_label_value(value: Any) -> str:
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def metric_line(name: str, value: int | float, labels: dict[str, Any] | None = None) -> str:
+    if not labels:
+        return f"{name} {value}"
+    label_text = ",".join(
+        f'{key}="{prometheus_label_value(label_value)}"'
+        for key, label_value in sorted(labels.items())
+    )
+    return f"{name}{{{label_text}}} {value}"
+
+
+def render_prometheus_metrics(snapshot: dict[str, Any]) -> str:
+    lines = [
+        "# HELP poiesis_requests_total Audit-log-backed request count.",
+        "# TYPE poiesis_requests_total counter",
+    ]
+    for row in snapshot["requests"]:
+        lines.append(
+            metric_line(
+                "poiesis_requests_total",
+                int(row["count"]),
+                {
+                    "route": row["route"],
+                    "status_code": row["status_code"],
+                    "error_class": row["error_class"] or "none",
+                },
+            )
+        )
+
+    lines.extend(
+        [
+            "# HELP poiesis_request_errors_total Audit-log-backed request error count.",
+            "# TYPE poiesis_request_errors_total counter",
+        ]
+    )
+    for row in snapshot["errors"]:
+        lines.append(
+            metric_line(
+                "poiesis_request_errors_total",
+                int(row["count"]),
+                {"error_class": row["error_class"]},
+            )
+        )
+
+    total_count = int(snapshot["total_audit_count"])
+    error_count = int(snapshot["error_count"])
+    error_ratio = round(error_count / total_count, 6) if total_count else 0
+    lines.extend(
+        [
+            "# HELP poiesis_request_error_ratio Audit-log-backed error ratio.",
+            "# TYPE poiesis_request_error_ratio gauge",
+            metric_line("poiesis_request_error_ratio", error_ratio),
+            "# HELP poiesis_tokens_total Positive token usage by student and model.",
+            "# TYPE poiesis_tokens_total counter",
+        ]
+    )
+    for row in snapshot["tokens"]:
+        lines.append(
+            metric_line(
+                "poiesis_tokens_total",
+                int(row["total_tokens"] or 0),
+                {"student_id": row["student_id"] or "unknown", "model": row["model"] or "unknown"},
+            )
+        )
+
+    lines.extend(
+        [
+            "# HELP poiesis_upstream_latency_seconds Upstream latency summary.",
+            "# TYPE poiesis_upstream_latency_seconds summary",
+        ]
+    )
+    for row in snapshot["latencies"]:
+        labels = {"model": row["model"] or "unknown", "status_code": row["status_code"]}
+        lines.append(
+            metric_line(
+                "poiesis_upstream_latency_seconds_count",
+                int(row["count"]),
+                labels,
+            )
+        )
+        lines.append(
+            metric_line(
+                "poiesis_upstream_latency_seconds_sum",
+                round(float(row["sum_ms"] or 0) / 1000, 6),
+                labels,
+            )
+        )
+        lines.append(
+            metric_line(
+                "poiesis_upstream_latency_seconds_max",
+                round(float(row["max_ms"] or 0) / 1000, 6),
+                labels,
+            )
+        )
+
+    lines.extend(
+        [
+            "# HELP poiesis_students_active Active student key count.",
+            "# TYPE poiesis_students_active gauge",
+            metric_line("poiesis_students_active", int(snapshot["active_student_count"])),
+            "# HELP poiesis_students_inactive Inactive student key count.",
+            "# TYPE poiesis_students_inactive gauge",
+            metric_line("poiesis_students_inactive", int(snapshot["inactive_student_count"])),
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
 
 def chat_content_size(content: Any, message_index: int, *, key_preview: str | None = None) -> int:
@@ -680,6 +793,7 @@ async def chat_completions(
     payload: dict[str, Any] | None = None
     model: str | None = None
     token_delta = 0
+    upstream_latency_ms: int | None = None
     try:
         if not user["is_active"]:
             if int(user["total_tokens_consumed"]) >= settings.monthly_token_ceiling:
@@ -764,6 +878,7 @@ async def chat_completions(
             return JSONResponse(response_payload, headers={"x-request-id": request_id})
 
         try:
+            upstream_started_at = time.perf_counter()
             upstream_response = await forward_to_portkey(
                 payload=payload,
                 settings=settings,
@@ -772,7 +887,9 @@ async def chat_completions(
                 request_id=request_id,
                 tier=tier,
             )
+            upstream_latency_ms = max(int((time.perf_counter() - upstream_started_at) * 1000), 0)
         except httpx.TimeoutException as exc:
+            upstream_latency_ms = max(int((time.perf_counter() - upstream_started_at) * 1000), 0)
             logger.warning(
                 "upstream timeout request_id=%s student_id=%s",
                 request_id,
@@ -787,6 +904,7 @@ async def chat_completions(
                 ),
             ) from exc
         except httpx.RequestError as exc:
+            upstream_latency_ms = max(int((time.perf_counter() - upstream_started_at) * 1000), 0)
             logger.warning(
                 "upstream request error request_id=%s student_id=%s error=%s",
                 request_id,
@@ -856,6 +974,7 @@ async def chat_completions(
             model=model,
             status_code=upstream_response.status_code,
             error_class=error_class,
+            upstream_latency_ms=upstream_latency_ms,
         )
         logger.info(
             "chat request completed request_id=%s student_id=%s status_code=%s dry_run=false",
@@ -880,8 +999,18 @@ async def chat_completions(
             model=model,
             status_code=exc.status_code,
             error_class=audit_error_class(exc),
+            upstream_latency_ms=upstream_latency_ms,
         )
         raise
+
+
+@app.get("/metrics", dependencies=[Depends(require_admin)])
+async def prometheus_metrics(settings: Settings = Depends(get_app_settings)) -> Response:
+    snapshot = database.metrics_snapshot(settings.database_path)
+    return Response(
+        content=render_prometheus_metrics(snapshot),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/admin/users", dependencies=[Depends(require_admin)])

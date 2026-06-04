@@ -550,6 +550,72 @@ def test_rate_limit_rejection_is_written_to_audit_log(tmp_path: Path) -> None:
     assert event["error_class"] == "rate_limit_window"
 
 
+def test_metrics_endpoint_requires_admin_and_exports_prometheus_snapshot(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "club.db"
+    database.initialize_database(str(database_path))
+    database.upsert_users(str(database_path), DEFAULT_STUDENTS)
+    database.record_audit_event(
+        str(database_path),
+        request_id="req-metrics-success",
+        student_id=ADA_STUDENT_ID,
+        key_preview=database.key_preview(ADA_KEY),
+        token_delta=12,
+        route="/v1/chat/completions",
+        model="dry-run-minimax",
+        status_code=200,
+        error_class=None,
+    )
+    database.record_audit_event(
+        str(database_path),
+        request_id="req-metrics-rate-limit",
+        student_id=ADA_STUDENT_ID,
+        key_preview=database.key_preview(ADA_KEY),
+        token_delta=0,
+        route="/v1/chat/completions",
+        model="dry-run-minimax",
+        status_code=429,
+        error_class="rate_limit_window",
+    )
+    database.record_audit_event(
+        str(database_path),
+        request_id="req-metrics-upstream",
+        student_id=ADA_STUDENT_ID,
+        key_preview=database.key_preview(ADA_KEY),
+        token_delta=0,
+        route="/v1/chat/completions",
+        model="minimax-live",
+        status_code=502,
+        error_class="upstream_http_error",
+        upstream_latency_ms=250,
+    )
+
+    try:
+        client = _client_for_database(database_path)
+        unauthenticated_response = client.get("/metrics")
+        metrics_response = client.get("/metrics", headers={"x-admin-token": "admin-token"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert unauthenticated_response.status_code == 401
+    assert metrics_response.status_code == 200
+    assert metrics_response.headers["content-type"].startswith("text/plain")
+    body = metrics_response.text
+    assert (
+        'poiesis_requests_total{error_class="none",route="/v1/chat/completions",status_code="200"} 1'
+        in body
+    )
+    assert 'poiesis_request_errors_total{error_class="rate_limit_window"} 1' in body
+    assert 'poiesis_request_errors_total{error_class="upstream_http_error"} 1' in body
+    assert 'poiesis_tokens_total{model="dry-run-minimax",student_id="stu-ada-lovelace"} 12' in body
+    assert 'poiesis_upstream_latency_seconds_count{model="minimax-live",status_code="502"} 1' in body
+    assert 'poiesis_upstream_latency_seconds_sum{model="minimax-live",status_code="502"} 0.25' in body
+    assert "poiesis_request_error_ratio 0.666667" in body
+    assert "poiesis_students_active 7" in body
+    assert ADA_KEY not in body
+
+
 def test_forward_to_portkey_uses_master_credential_not_student_key(
     monkeypatch: Any,
 ) -> None:

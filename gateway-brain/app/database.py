@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     model TEXT,
     status_code INTEGER NOT NULL,
     error_class TEXT,
+    upstream_latency_ms INTEGER,
     created_at TEXT NOT NULL
 );
 
@@ -170,7 +171,14 @@ def initialize_database(
     with connect(database_path) as connection:
         _migrate_legacy_users(connection, key_hash_secret)
         connection.executescript(SCHEMA)
+        _ensure_audit_log_metrics_columns(connection)
         connection.commit()
+
+
+def _ensure_audit_log_metrics_columns(connection: sqlite3.Connection) -> None:
+    columns = _table_columns(connection, "audit_log")
+    if columns and "upstream_latency_ms" not in columns:
+        connection.execute("ALTER TABLE audit_log ADD COLUMN upstream_latency_ms INTEGER;")
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -335,6 +343,7 @@ def record_audit_event(
     model: str | None,
     status_code: int,
     error_class: str | None,
+    upstream_latency_ms: int | None = None,
 ) -> int:
     now = utc_now()
     with connect(database_path) as connection:
@@ -349,9 +358,10 @@ def record_audit_event(
                 model,
                 status_code,
                 error_class,
+                upstream_latency_ms,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 request_id,
@@ -362,6 +372,7 @@ def record_audit_event(
                 model,
                 status_code,
                 error_class,
+                upstream_latency_ms,
                 now,
             ),
         )
@@ -381,7 +392,7 @@ def list_audit_events(
             rows = connection.execute(
                 """
                 SELECT id, request_id, student_id, key_preview, token_delta, route, model,
-                       status_code, error_class, created_at
+                       status_code, error_class, upstream_latency_ms, created_at
                 FROM audit_log
                 WHERE student_id = ?
                 ORDER BY id DESC
@@ -393,7 +404,7 @@ def list_audit_events(
             rows = connection.execute(
                 """
                 SELECT id, request_id, student_id, key_preview, token_delta, route, model,
-                       status_code, error_class, created_at
+                       status_code, error_class, upstream_latency_ms, created_at
                 FROM audit_log
                 ORDER BY id DESC
                 LIMIT ?
@@ -401,6 +412,73 @@ def list_audit_events(
                 (bounded_limit,),
             ).fetchall()
     return [audit_row_to_dict(row) for row in rows]
+
+
+def metrics_snapshot(database_path: str) -> dict[str, Any]:
+    with connect(database_path) as connection:
+        request_rows = connection.execute(
+            """
+            SELECT route, status_code, COALESCE(error_class, '') AS error_class, COUNT(*) AS count
+            FROM audit_log
+            GROUP BY route, status_code, COALESCE(error_class, '')
+            ORDER BY route, status_code, error_class
+            """
+        ).fetchall()
+        error_rows = connection.execute(
+            """
+            SELECT COALESCE(error_class, 'unknown') AS error_class, COUNT(*) AS count
+            FROM audit_log
+            WHERE error_class IS NOT NULL
+            GROUP BY error_class
+            ORDER BY error_class
+            """
+        ).fetchall()
+        token_rows = connection.execute(
+            """
+            SELECT student_id, COALESCE(model, '') AS model, SUM(token_delta) AS total_tokens
+            FROM audit_log
+            WHERE token_delta > 0
+            GROUP BY student_id, COALESCE(model, '')
+            ORDER BY student_id, model
+            """
+        ).fetchall()
+        latency_rows = connection.execute(
+            """
+            SELECT COALESCE(model, '') AS model,
+                   status_code,
+                   COUNT(*) AS count,
+                   SUM(upstream_latency_ms) AS sum_ms,
+                   MAX(upstream_latency_ms) AS max_ms
+            FROM audit_log
+            WHERE upstream_latency_ms IS NOT NULL
+            GROUP BY COALESCE(model, ''), status_code
+            ORDER BY model, status_code
+            """
+        ).fetchall()
+        total_audit_count = int(
+            connection.execute("SELECT COUNT(*) AS count FROM audit_log").fetchone()["count"]
+        )
+        error_count = int(
+            connection.execute(
+                "SELECT COUNT(*) AS count FROM audit_log WHERE error_class IS NOT NULL"
+            ).fetchone()["count"]
+        )
+        active_student_count = int(
+            connection.execute("SELECT COUNT(*) AS count FROM users WHERE is_active = 1").fetchone()["count"]
+        )
+        inactive_student_count = int(
+            connection.execute("SELECT COUNT(*) AS count FROM users WHERE is_active = 0").fetchone()["count"]
+        )
+    return {
+        "requests": [dict(row) for row in request_rows],
+        "errors": [dict(row) for row in error_rows],
+        "tokens": [dict(row) for row in token_rows],
+        "latencies": [dict(row) for row in latency_rows],
+        "total_audit_count": total_audit_count,
+        "error_count": error_count,
+        "active_student_count": active_student_count,
+        "inactive_student_count": inactive_student_count,
+    }
 
 
 def reset_monthly_token_totals(

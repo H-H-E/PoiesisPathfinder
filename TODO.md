@@ -220,7 +220,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Prevent accidental giant context submissions.
 - [x] Add semantic loop detection.
   - Flag repeated identical prompts from the same student.
-- [ ] Add Prometheus-style metrics.
+- [x] Add Prometheus-style metrics.
   - Export request counts, blocks, token spend, upstream latency, and error rates.
 - [ ] Add teacher-friendly CSV export.
   - Export student usage and incidents for club administration.

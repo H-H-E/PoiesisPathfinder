@@ -286,6 +286,11 @@ FastAPI admin routes fail closed when `POIESIS_ADMIN_TOKEN` is missing. The only
 way to run admin routes without a token is to set `ALLOW_INSECURE_ADMIN=true`,
 which is for isolated development only.
 
+Prometheus-style metrics are available at `GET /metrics` with the same
+`x-admin-token` header. The endpoint exports request counts, error counts,
+token spend, upstream latency summaries, and active/inactive student gauges
+without raw student keys.
+
 ## Verification Commands
 
 Run the checks that match the area you changed:
