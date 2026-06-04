@@ -10,7 +10,7 @@ Hermes client -> FastAPI governance brain -> Portkey sidecar -> Minimax API.
 - [ ] **Gate B - Security baseline:** admin auth fails closed, raw virtual keys are not exposed outside FastAPI, Redis keys do not contain usable secrets, and every request receives a correlation ID.
 - [ ] **Gate C - Quota integrity:** burst and five-hour windows are checked atomically, missing usage is handled by policy, concurrent requests cannot race past quota, and monthly cap crossing locks the key immediately.
 - [ ] **Gate D - Real Portkey/Minimax probe:** one controlled non-dry-run request proves Portkey provider configuration, `usage` shape, token accounting, and upstream error handling.
-- [ ] **Gate E - Operator runbook:** a coding-club operator can start, verify, monitor, reset, lock, rotate, and recover keys from documented procedures.
+- [x] **Gate E - Operator runbook:** a coding-club operator can start, verify, monitor, reset, lock, rotate, and recover keys from documented procedures.
 
 See `reports/engineering-hardening-plan.md` for the compound engineering review behind these gates.
 
@@ -186,25 +186,25 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 ## Milestone 9: Operator Runbook
 
-- [ ] Document normal startup.
+- [x] Document normal startup.
   - `cp .env.example .env`
   - Fill secrets.
   - `docker compose up --build`
-- [ ] Document dry-run startup.
+- [x] Document dry-run startup.
   - `DRY_RUN_UPSTREAM=true` for quota-safe demos.
-- [ ] Document real upstream startup.
+- [x] Document real upstream startup.
   - `DRY_RUN_UPSTREAM=false` and real `MINIMAX_API_KEY`.
-- [ ] Document common incidents.
+- [x] Document common incidents.
   - Student infinite loop.
   - Monthly budget exhausted.
   - Redis unavailable.
   - Portkey unavailable.
   - Minimax upstream error.
-- [ ] Document dashboard overrides.
+- [x] Document dashboard overrides.
   - When to reset windows.
   - When to restore tokens.
   - When to disable a key.
-- [ ] Document key rotation.
+- [x] Document key rotation.
   - Disable old key.
   - Generate new key.
   - Send new key out-of-band.

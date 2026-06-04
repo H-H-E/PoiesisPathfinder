@@ -9,6 +9,9 @@ The repository is still in a pre-release state. Dry-run mode is the safe local
 path today. Real Minimax traffic should wait until the release gates in
 `TODO.md` and `reports/engineering-hardening-plan.md` are satisfied.
 
+For start, verification, monitoring, incident response, dashboard overrides,
+and key rotation procedures, see `docs/operator-runbook.md`.
+
 ## Network Flow
 
 ```text
