@@ -1,13 +1,13 @@
 import { proxyGateway } from "@/lib/gateway";
 
 type RouteContext = {
-  params: Promise<{ virtualKey: string }>;
+  params: Promise<{ studentId: string }>;
 };
 
 export async function POST(request: Request, context: RouteContext) {
-  const { virtualKey } = await context.params;
+  const { studentId } = await context.params;
   const body = await request.text();
-  return proxyGateway(`/admin/users/${encodeURIComponent(virtualKey)}/adjust-tokens`, {
+  return proxyGateway(`/admin/users/${encodeURIComponent(studentId)}/active`, {
     method: "POST",
     body,
     headers: {

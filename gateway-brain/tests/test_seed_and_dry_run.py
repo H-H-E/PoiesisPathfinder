@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,20 +15,26 @@ from app.main import app, get_app_settings, limiter_from_state
 from seed_club import DEFAULT_STUDENTS, main as seed_main
 
 
+ADA_KEY = "sk-poiesis-ada-7f3c9d2a"
+ADA_STUDENT_ID = "stu-ada-lovelace"
+
+
 class AllowingLimiter:
     def __init__(self) -> None:
         self.calls = 0
+        self.identities: list[str] = []
 
     async def check_and_record(
         self,
         *,
-        virtual_key: str,
+        identity: str,
         tier: str,
         scope: str,
         window_seconds: int,
         limit: int,
     ) -> LimitStatus:
         self.calls += 1
+        self.identities.append(identity)
         return LimitStatus(
             scope=scope,
             tier=tier,
@@ -41,7 +49,7 @@ class AllowingLimiter:
     async def check_and_record_window_and_burst(
         self,
         *,
-        virtual_key: str,
+        identity: str,
         tier: str,
         window_seconds: int,
         window_limit: int,
@@ -49,6 +57,7 @@ class AllowingLimiter:
         burst_limit: int,
     ) -> tuple[LimitStatus, LimitStatus]:
         self.calls += 1
+        self.identities.append(identity)
         return (
             LimitStatus(
                 scope="window",
@@ -87,14 +96,96 @@ def test_seed_script_creates_exactly_seven_active_students(
     seed_main()
 
     users = database.list_users(str(database_path))
+    serialized_users = json.dumps(users)
     assert len(users) == 7
     assert {user["student_name"] for user in users} == {
         student_name for student_name, _ in DEFAULT_STUDENTS
     }
+    for _, raw_key in DEFAULT_STUDENTS:
+        assert raw_key not in serialized_users
     for user in users:
-        assert user["virtual_key"].startswith("sk-poiesis-")
+        assert "virtual_key" not in user
+        assert "virtual_key_hash" not in user
+        assert user["student_id"].startswith("stu-")
+        assert user["key_preview"].startswith("sk-poiesis-")
+        assert "..." in user["key_preview"]
         assert user["total_tokens_consumed"] == 0
         assert user["is_active"] is True
+
+
+def test_short_key_preview_never_exposes_full_key() -> None:
+    short_key = "sk-poiesis-a"
+
+    preview = database.key_preview(short_key)
+
+    assert preview == "sk-poiesis-..."
+    assert short_key not in preview
+    assert database.key_preview(ADA_KEY) != ADA_KEY
+
+
+def test_migration_drops_legacy_virtual_key_column_from_mixed_schema(tmp_path: Path) -> None:
+    database_path = tmp_path / "club.db"
+    now = database.utc_now()
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE users (
+                student_id TEXT PRIMARY KEY,
+                virtual_key TEXT NOT NULL UNIQUE,
+                virtual_key_hash TEXT NOT NULL UNIQUE,
+                key_preview TEXT NOT NULL,
+                student_name TEXT NOT NULL,
+                total_tokens_consumed INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO users (
+                student_id,
+                virtual_key,
+                virtual_key_hash,
+                key_preview,
+                student_name,
+                total_tokens_consumed,
+                is_active,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ADA_STUDENT_ID,
+                ADA_KEY,
+                database.virtual_key_hash(ADA_KEY),
+                database.key_preview(ADA_KEY),
+                "Ada Lovelace",
+                42,
+                1,
+                now,
+                now,
+            ),
+        )
+        connection.commit()
+
+    database.initialize_database(str(database_path))
+
+    with database.connect(str(database_path)) as connection:
+        columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(users)").fetchall()
+        }
+    assert "virtual_key" not in columns
+    assert {"student_id", "virtual_key_hash", "key_preview"}.issubset(columns)
+
+    user = database.get_user_by_virtual_key(str(database_path), ADA_KEY)
+    assert user is not None
+    assert user["student_id"] == ADA_STUDENT_ID
+    assert user["total_tokens_consumed"] == 42
+    assert ADA_KEY not in json.dumps(database.list_users(str(database_path)))
 
 
 def test_dry_run_chat_completion_is_openai_compatible_and_records_usage(
@@ -117,7 +208,7 @@ def test_dry_run_chat_completion_is_openai_compatible_and_records_usage(
         client = TestClient(app)
         response = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer sk-poiesis-ada-7f3c9d2a"},
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
             json={
                 "model": "dry-run-minimax",
                 "messages": [{"role": "user", "content": "hello"}],
@@ -131,9 +222,17 @@ def test_dry_run_chat_completion_is_openai_compatible_and_records_usage(
     assert payload["object"] == "chat.completion"
     assert payload["choices"][0]["message"]["role"] == "assistant"
     assert payload["usage"]["total_tokens"] > 0
+    assert limiter.identities == [ADA_STUDENT_ID]
 
-    user = database.get_user(str(database_path), "sk-poiesis-ada-7f3c9d2a")
+    user = database.get_user_by_virtual_key(
+        str(database_path),
+        ADA_KEY,
+        settings.poiesis_key_hash_secret,
+    )
     assert user is not None
+    assert user["student_id"] == ADA_STUDENT_ID
+    assert "virtual_key" not in user
+    assert "virtual_key_hash" not in user
     assert user["total_tokens_consumed"] == payload["usage"]["total_tokens"]
 
 
@@ -155,7 +254,7 @@ def test_streaming_is_rejected_before_rate_limit_recording(tmp_path: Path) -> No
         client = TestClient(app)
         response = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer sk-poiesis-ada-7f3c9d2a"},
+            headers={"Authorization": f"Bearer {ADA_KEY}"},
             json={
                 "model": "dry-run-minimax",
                 "stream": True,

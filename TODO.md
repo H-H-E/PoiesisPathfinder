@@ -45,7 +45,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 ## Milestone 2: Student Key Seeding
 
 - [x] Seed exactly seven initial student records.
-  - Acceptance: every record has `virtual_key`, `student_name`, `total_tokens_consumed = 0`, and `is_active = true`.
+  - Acceptance: every record has `student_id`, `student_name`, `key_preview`, `total_tokens_consumed = 0`, and `is_active = true`, and admin listings do not expose the raw bearer key.
 - [ ] Support secure key regeneration.
   - Acceptance: `python seed_club.py --random` creates seven non-demo keys without printing secrets anywhere except the operator terminal.
 - [ ] Add an operator checklist for key distribution.
@@ -61,11 +61,11 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Verify `Authorization: Bearer sk-poiesis-...`.
   - Reject missing, malformed, unknown, or inactive keys with HTTP 401.
   - Acceptance: no student key is forwarded to Portkey.
-- [ ] Replace raw virtual-key identifiers with production-safe identities.
+- [x] Replace raw virtual-key identifiers with production-safe identities.
   - Add stable `student_id`.
-  - Store an HMAC or salted hash of each virtual key.
+  - Store an HMAC hash of each bearer key using `POIESIS_KEY_HASH_SECRET`.
   - Return only `student_id` and key preview to the dashboard.
-  - Acceptance: raw virtual keys do not appear in dashboard JSON, Redis keys, URLs, or logs.
+  - Acceptance: raw bearer keys do not appear in dashboard JSON, Redis rate-limit identities, URLs, or forwarding metadata.
 - [ ] Enforce monthly token ceiling.
   - Ceiling: `185,700,000` tokens per user.
   - Acceptance: when a user reaches the ceiling, `is_active` flips false and future requests return HTTP 403.
@@ -82,7 +82,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [ ] Derive request tier from server-side policy.
   - Acceptance: production mode does not trust student-provided tier headers or payload fields.
 - [ ] Add structured error payloads.
-  - Include `message`, `student_key_preview`, `limit`, `remaining`, `reset_after_seconds`, and `scope` where applicable.
+  - Include `message`, `key_preview`, `limit`, `remaining`, `reset_after_seconds`, and `scope` where applicable.
 - [ ] Add request correlation IDs.
   - Acceptance: each proxied request has a log-visible ID shared across FastAPI logs and Portkey metadata.
 
@@ -120,8 +120,8 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 - [ ] Strip student credentials before forwarding.
   - Acceptance: upstream only sees the master Minimax/Portkey credential.
 - [ ] Add Portkey metadata.
-  - Include student name, key preview, request tier, and request correlation ID.
-  - Hardened target: prefer pseudonymous student IDs over student names.
+  - Include `student_id`, `key_preview`, request tier, and request correlation ID.
+  - Hardened target: avoid raw keys and student names in upstream metadata.
 - [ ] Confirm retries do not double-count tokens.
   - Acceptance: token accounting happens once from the final successful OpenAI-style response.
 - [ ] Add timeout and upstream error handling.
@@ -141,7 +141,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Negative deltas restore allowance after a false positive or test.
   - Positive deltas allow manual accounting correction.
 - [ ] Add an audit log table.
-  - Fields: request ID, student key preview, token delta, route, model, status code, timestamp, and error class.
+  - Fields: request ID, `student_id`, `key_preview`, token delta, route, model, status code, timestamp, and error class.
   - Acceptance: admin can explain why a student was blocked.
 
 ## Milestone 7: Brutalist Telemetry Dashboard

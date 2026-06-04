@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError(
             "POIESIS_ADMIN_TOKEN is required unless ALLOW_INSECURE_ADMIN=true."
         )
-    database.initialize_database(settings.database_path)
+    database.initialize_database(settings.database_path, settings.poiesis_key_hash_secret)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     app.state.redis = redis
     app.state.limiter = SlidingWindowLimiter(redis)
@@ -83,7 +83,7 @@ def parse_bearer_token(authorization: str | None) -> str:
         raise HTTPException(status_code=401, detail="Missing Authorization bearer token.")
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=401, detail="Expected Authorization: Bearer <virtual_key>.")
+        raise HTTPException(status_code=401, detail="Expected Authorization: Bearer <student_key>.")
     token = token.strip()
     if not token.startswith(STUDENT_KEY_PREFIX) or token == STUDENT_KEY_PREFIX:
         raise HTTPException(
@@ -118,12 +118,6 @@ def infer_request_tier(request: Request, payload: dict[str, Any]) -> Literal["st
     if normalized in {"high-speed", "highspeed", "fast"}:
         return "high-speed"
     return "standard"
-
-
-def public_key_preview(virtual_key: str) -> str:
-    if len(virtual_key) <= 14:
-        return virtual_key
-    return f"{virtual_key[:11]}...{virtual_key[-6:]}"
 
 
 def usage_total_tokens(payload: dict[str, Any]) -> int:
@@ -175,12 +169,12 @@ async def enforce_rate_limits(
     *,
     limiter: SlidingWindowLimiter,
     settings: Settings,
-    virtual_key: str,
+    identity: str,
     tier: str,
 ) -> None:
     try:
         long_window, burst_window = await limiter.check_and_record_window_and_burst(
-            virtual_key=virtual_key,
+            identity=identity,
             tier=tier,
             window_seconds=settings.rate_window_seconds,
             window_limit=settings.long_window_limit_for(tier),
@@ -219,8 +213,8 @@ async def forward_to_portkey(
     *,
     payload: dict[str, Any],
     settings: Settings,
-    virtual_key: str,
-    student_name: str,
+    student_id: str,
+    key_preview: str,
     tier: str,
 ) -> httpx.Response:
     if not settings.portkey_upstream_api_key:
@@ -235,8 +229,8 @@ async def forward_to_portkey(
         "x-portkey-provider": settings.portkey_provider,
         "x-portkey-metadata": json.dumps(
             {
-                "student_name": student_name,
-                "virtual_key_preview": public_key_preview(virtual_key),
+                "student_id": student_id,
+                "key_preview": key_preview,
                 "tier": tier,
             },
             separators=(",", ":"),
@@ -256,30 +250,30 @@ async def build_user_metrics(
     limiter: SlidingWindowLimiter,
     settings: Settings,
 ) -> dict[str, Any]:
-    virtual_key = user["virtual_key"]
+    student_id = user["student_id"]
     standard_window = await limiter.peek(
-        virtual_key=virtual_key,
+        identity=student_id,
         tier="standard",
         scope="window",
         window_seconds=settings.rate_window_seconds,
         limit=settings.standard_window_limit,
     )
     high_speed_window = await limiter.peek(
-        virtual_key=virtual_key,
+        identity=student_id,
         tier="high-speed",
         scope="window",
         window_seconds=settings.rate_window_seconds,
         limit=settings.high_speed_window_limit,
     )
     standard_burst = await limiter.peek(
-        virtual_key=virtual_key,
+        identity=student_id,
         tier="standard",
         scope="burst",
         window_seconds=settings.burst_window_seconds,
         limit=settings.standard_burst_limit,
     )
     high_speed_burst = await limiter.peek(
-        virtual_key=virtual_key,
+        identity=student_id,
         tier="high-speed",
         scope="burst",
         window_seconds=settings.burst_window_seconds,
@@ -289,7 +283,6 @@ async def build_user_metrics(
     ceiling = settings.monthly_token_ceiling
     return {
         **user,
-        "virtual_key_preview": public_key_preview(virtual_key),
         "monthly_token_ceiling": ceiling,
         "tokens_remaining": max(ceiling - consumed, 0),
         "token_percent_used": round(min(consumed / ceiling, 1) * 100, 4) if ceiling else 0,
@@ -324,11 +317,16 @@ async def chat_completions(
     limiter: SlidingWindowLimiter = Depends(limiter_from_state),
 ) -> Response:
     virtual_key = parse_bearer_token(authorization)
-    user = database.get_user(settings.database_path, virtual_key)
+    user = database.get_user_by_virtual_key(
+        settings.database_path,
+        virtual_key,
+        settings.poiesis_key_hash_secret,
+    )
     if user is None or not user["is_active"]:
         raise HTTPException(status_code=401, detail="Unknown or inactive virtual key.")
 
-    if database.deactivate_if_spent(settings.database_path, virtual_key, settings.monthly_token_ceiling):
+    student_id = str(user["student_id"])
+    if database.deactivate_if_spent(settings.database_path, student_id, settings.monthly_token_ceiling):
         raise HTTPException(status_code=403, detail="Monthly token budget spent.")
 
     try:
@@ -351,7 +349,7 @@ async def chat_completions(
     await enforce_rate_limits(
         limiter=limiter,
         settings=settings,
-        virtual_key=virtual_key,
+        identity=student_id,
         tier=tier,
     )
 
@@ -359,14 +357,14 @@ async def chat_completions(
         response_payload = dry_run_response(payload)
         token_delta = usage_total_tokens(response_payload)
         if token_delta:
-            database.increment_tokens(settings.database_path, virtual_key, token_delta)
+            database.increment_tokens(settings.database_path, student_id, token_delta)
         return JSONResponse(response_payload)
 
     upstream_response = await forward_to_portkey(
         payload=payload,
         settings=settings,
-        virtual_key=virtual_key,
-        student_name=user["student_name"],
+        student_id=student_id,
+        key_preview=str(user["key_preview"]),
         tier=tier,
     )
 
@@ -378,7 +376,7 @@ async def chat_completions(
             response_payload = {}
         token_delta = usage_total_tokens(response_payload)
         if token_delta:
-            database.increment_tokens(settings.database_path, virtual_key, token_delta)
+            database.increment_tokens(settings.database_path, student_id, token_delta)
 
     return Response(
         content=upstream_response.content,
@@ -409,47 +407,54 @@ async def admin_users(
     }
 
 
-@app.post("/admin/users/{virtual_key}/reset-window", dependencies=[Depends(require_admin)])
+@app.post("/admin/users/{student_id}/reset-window", dependencies=[Depends(require_admin)])
 async def reset_user_window(
-    virtual_key: str,
+    student_id: str,
     payload: ResetWindowPayload,
+    settings: Settings = Depends(get_app_settings),
     limiter: SlidingWindowLimiter = Depends(limiter_from_state),
 ) -> dict[str, Any]:
+    user = database.get_user_by_student_id(settings.database_path, student_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Unknown student ID.")
     tiers = ["standard", "high-speed"] if payload.tier == "all" else [payload.tier]
     deleted = 0
     for tier in tiers:
         deleted += await limiter.reset(
-            virtual_key=virtual_key,
+            identity=student_id,
             tier=tier,
             include_burst=payload.include_burst,
         )
-    return {"ok": True, "virtual_key_preview": public_key_preview(virtual_key), "deleted_keys": deleted}
+    return {"ok": True, "student_id": student_id, "key_preview": user["key_preview"], "deleted_keys": deleted}
 
 
-@app.post("/admin/users/{virtual_key}/adjust-tokens", dependencies=[Depends(require_admin)])
+@app.post("/admin/users/{student_id}/adjust-tokens", dependencies=[Depends(require_admin)])
 async def adjust_tokens(
-    virtual_key: str,
+    student_id: str,
     payload: TokenAdjustmentPayload,
     settings: Settings = Depends(get_app_settings),
 ) -> dict[str, Any]:
-    if database.get_user(settings.database_path, virtual_key) is None:
-        raise HTTPException(status_code=404, detail="Unknown virtual key.")
-    total = database.increment_tokens(settings.database_path, virtual_key, payload.delta_tokens)
+    user = database.get_user_by_student_id(settings.database_path, student_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Unknown student ID.")
+    total = database.increment_tokens(settings.database_path, student_id, payload.delta_tokens)
     return {
         "ok": True,
-        "virtual_key_preview": public_key_preview(virtual_key),
+        "student_id": student_id,
+        "key_preview": user["key_preview"],
         "total_tokens_consumed": total,
         "tokens_remaining": max(settings.monthly_token_ceiling - total, 0),
     }
 
 
-@app.post("/admin/users/{virtual_key}/active", dependencies=[Depends(require_admin)])
+@app.post("/admin/users/{student_id}/active", dependencies=[Depends(require_admin)])
 async def set_user_active(
-    virtual_key: str,
+    student_id: str,
     payload: ReactivatePayload,
     settings: Settings = Depends(get_app_settings),
 ) -> dict[str, Any]:
-    if database.get_user(settings.database_path, virtual_key) is None:
-        raise HTTPException(status_code=404, detail="Unknown virtual key.")
-    database.set_active(settings.database_path, virtual_key, payload.is_active)
-    return {"ok": True, "virtual_key_preview": public_key_preview(virtual_key), "is_active": payload.is_active}
+    user = database.get_user_by_student_id(settings.database_path, student_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Unknown student ID.")
+    database.set_active(settings.database_path, student_id, payload.is_active)
+    return {"ok": True, "student_id": student_id, "key_preview": user["key_preview"], "is_active": payload.is_active}

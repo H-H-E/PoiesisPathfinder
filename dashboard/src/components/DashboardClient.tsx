@@ -31,7 +31,7 @@ export default function DashboardClient() {
   const [payload, setPayload] = useState<UsersPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [busyStudentId, setBusyStudentId] = useState<string | null>(null);
   const [tokenDeltas, setTokenDeltas] = useState<Record<string, string>>({});
 
   const fetchUsers = useCallback(async () => {
@@ -68,10 +68,10 @@ export default function DashboardClient() {
     };
   }, [payload]);
 
-  async function mutateStudent(virtualKey: string, path: string, body: unknown) {
-    setBusyKey(virtualKey);
+  async function mutateStudent(studentId: string, path: string, body: unknown) {
+    setBusyStudentId(studentId);
     try {
-      await requestJson(`/api/users/${encodeURIComponent(virtualKey)}${path}`, {
+      await requestJson(`/api/users/${encodeURIComponent(studentId)}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -80,12 +80,12 @@ export default function DashboardClient() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Admin action failed.");
     } finally {
-      setBusyKey(null);
+      setBusyStudentId(null);
     }
   }
 
   function tokenDeltaFor(user: StudentMetrics): number {
-    const raw = tokenDeltas[user.virtual_key];
+    const raw = tokenDeltas[user.student_id];
     if (!raw) {
       return -TEN_THOUSAND;
     }
@@ -131,12 +131,12 @@ export default function DashboardClient() {
 
       <section className="student-grid" aria-label="Student usage metrics">
         {(payload?.users ?? []).map((user, index) => (
-          <article className="student-tile" key={user.virtual_key}>
+          <article className="student-tile" key={user.student_id}>
             <div className="tile-index">{String(index + 1).padStart(2, "0")}</div>
             <div className="student-heading">
               <div>
                 <h2>{user.student_name}</h2>
-                <p>{user.virtual_key_preview}</p>
+                <p>{user.key_preview}</p>
               </div>
               <span className={user.is_active ? "key-state active" : "key-state inactive"}>
                 {user.is_active ? "ACTIVE" : "LOCKED"}
@@ -189,9 +189,9 @@ export default function DashboardClient() {
             <div className="override-row">
               <button
                 type="button"
-                disabled={busyKey === user.virtual_key}
+                disabled={busyStudentId === user.student_id}
                 onClick={() =>
-                  void mutateStudent(user.virtual_key, "/reset-window", {
+                  void mutateStudent(user.student_id, "/reset-window", {
                     tier: "standard",
                     include_burst: true,
                   })
@@ -201,9 +201,9 @@ export default function DashboardClient() {
               </button>
               <button
                 type="button"
-                disabled={busyKey === user.virtual_key}
+                disabled={busyStudentId === user.student_id}
                 onClick={() =>
-                  void mutateStudent(user.virtual_key, "/reset-window", {
+                  void mutateStudent(user.student_id, "/reset-window", {
                     tier: "all",
                     include_burst: true,
                   })
@@ -213,9 +213,9 @@ export default function DashboardClient() {
               </button>
               <button
                 type="button"
-                disabled={busyKey === user.virtual_key}
+                disabled={busyStudentId === user.student_id}
                 onClick={() =>
-                  void mutateStudent(user.virtual_key, "/active", {
+                  void mutateStudent(user.student_id, "/active", {
                     is_active: !user.is_active,
                   })
                 }
@@ -228,19 +228,19 @@ export default function DashboardClient() {
               <input
                 aria-label={`${user.student_name} token delta`}
                 inputMode="numeric"
-                value={tokenDeltas[user.virtual_key] ?? `-${TEN_THOUSAND}`}
+                value={tokenDeltas[user.student_id] ?? `-${TEN_THOUSAND}`}
                 onChange={(event) =>
                   setTokenDeltas((current) => ({
                     ...current,
-                    [user.virtual_key]: event.target.value,
+                    [user.student_id]: event.target.value,
                   }))
                 }
               />
               <button
                 type="button"
-                disabled={busyKey === user.virtual_key}
+                disabled={busyStudentId === user.student_id}
                 onClick={() =>
-                  void mutateStudent(user.virtual_key, "/adjust-tokens", {
+                  void mutateStudent(user.student_id, "/adjust-tokens", {
                     delta_tokens: tokenDeltaFor(user),
                   })
                 }

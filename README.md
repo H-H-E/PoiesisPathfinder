@@ -60,6 +60,7 @@ Important variables:
 | `DATABASE_PATH` | SQLite database path for student records and token totals. |
 | `REDIS_URL` | Redis connection URL. |
 | `POIESIS_ADMIN_TOKEN` | Token required by dashboard server routes when calling FastAPI admin endpoints. Required unless `ALLOW_INSECURE_ADMIN=true`. |
+| `POIESIS_KEY_HASH_SECRET` | Secret used to HMAC-hash student bearer keys before storage and identity lookups. Use a long random value and keep it stable for an environment. |
 | `ALLOW_INSECURE_ADMIN` | Explicit development-only escape hatch. Leave `false` for shared or production-like environments. |
 | `DRY_RUN_UPSTREAM` | `true` returns local OpenAI-shaped responses without contacting Portkey or Minimax. |
 | `ALLOW_STREAMING` | Defaults to `false`; streaming is blocked because accounting needs the final `usage` block. |
@@ -123,6 +124,7 @@ image name documented by Portkey. If Portkey changes packaging, set
    PORTKEY_BASE_URL=http://localhost:8787
    GATEWAY_BRAIN_URL=http://localhost:8000
    POIESIS_ADMIN_TOKEN=replace-with-local-admin-token
+   POIESIS_KEY_HASH_SECRET=replace-with-long-random-secret
    ```
 
 2. Start Redis:
@@ -217,6 +219,10 @@ The dashboard is a dense operator console for the seven seeded student records.
 It polls `/api/users`, which proxies to FastAPI `/admin/users`. Mutation routes
 reset rate windows, lock or unlock keys, and apply token deltas through the
 dashboard server so `POIESIS_ADMIN_TOKEN` stays server-side.
+
+Admin and dashboard surfaces identify students with stable `student_id` values
+and short `key_preview` strings. They do not expose raw student bearer keys in
+dashboard JSON, URLs, Redis rate-limit identities, or forwarding metadata.
 
 FastAPI admin routes fail closed when `POIESIS_ADMIN_TOKEN` is missing. The only
 way to run admin routes without a token is to set `ALLOW_INSECURE_ADMIN=true`,

@@ -26,6 +26,7 @@ services:
         required: false
     environment:
       DATABASE_PATH: ${DATABASE_PATH:-/data/database.db}
+      POIESIS_KEY_HASH_SECRET: ${POIESIS_KEY_HASH_SECRET:-replace-with-local-key-hash-secret}
     volumes:
       - gateway-data:/data
     command: ["python", "seed_club.py", "--database", "${DATABASE_PATH:-/data/database.db}"]
@@ -45,6 +46,7 @@ services:
       MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
       POIESIS_ADMIN_TOKEN: ${POIESIS_ADMIN_TOKEN:-replace-with-local-admin-token}
       ALLOW_INSECURE_ADMIN: ${ALLOW_INSECURE_ADMIN:-false}
+      POIESIS_KEY_HASH_SECRET: ${POIESIS_KEY_HASH_SECRET:-replace-with-local-key-hash-secret}
       DRY_RUN_UPSTREAM: ${DRY_RUN_UPSTREAM:-true}
       ALLOW_STREAMING: ${ALLOW_STREAMING:-false}
       MONTHLY_TOKEN_CEILING: ${MONTHLY_TOKEN_CEILING:-185700000}

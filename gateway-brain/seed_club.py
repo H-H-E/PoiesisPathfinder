@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import secrets
 from pathlib import Path
 
-from app.database import initialize_database, list_users, upsert_users
+from app.database import DEFAULT_KEY_HASH_SECRET, initialize_database, upsert_users
 
 
 DEFAULT_STUDENTS = [
@@ -37,18 +38,22 @@ def main() -> None:
         action="store_true",
         help="Generate fresh secure virtual keys instead of the documented local-demo keys.",
     )
+    parser.add_argument(
+        "--key-hash-secret",
+        default=os.getenv("POIESIS_KEY_HASH_SECRET", DEFAULT_KEY_HASH_SECRET),
+        help="Secret used to HMAC student virtual keys before storing them.",
+    )
     args = parser.parse_args()
 
     database_path = str(Path(args.database))
-    initialize_database(database_path)
+    initialize_database(database_path, args.key_hash_secret)
     users = random_students() if args.random else DEFAULT_STUDENTS
-    upsert_users(database_path, users)
+    upsert_users(database_path, users, args.key_hash_secret)
 
     print(f"Seeded {len(users)} PoiesisPathfinder students in {database_path}")
     print()
-    for user in list_users(database_path):
-        status = "active" if user["is_active"] else "inactive"
-        print(f"{user['student_name']}: {user['virtual_key']} ({status})")
+    for student_name, virtual_key in users:
+        print(f"{student_name}: {virtual_key} (active)")
 
 
 if __name__ == "__main__":

@@ -27,15 +27,15 @@ async def _redis_or_skip() -> Redis:
     return redis
 
 
-async def _cleanup(limiter: SlidingWindowLimiter, virtual_key: str) -> None:
-    await limiter.reset(virtual_key=virtual_key, tier="standard", include_burst=True)
+async def _cleanup(limiter: SlidingWindowLimiter, identity: str) -> None:
+    await limiter.reset(identity=identity, tier="standard", include_burst=True)
 
 
 def test_burst_rejection_does_not_consume_long_window_quota() -> None:
     async def scenario() -> None:
         redis = await _redis_or_skip()
         limiter = SlidingWindowLimiter(redis)
-        virtual_key = f"sk-poiesis-test-{uuid.uuid4().hex}"
+        identity = f"stu-test-{uuid.uuid4().hex}"
         settings = Settings(
             _env_file=None,
             rate_window_seconds=300,
@@ -47,34 +47,34 @@ def test_burst_rejection_does_not_consume_long_window_quota() -> None:
             await enforce_rate_limits(
                 limiter=limiter,
                 settings=settings,
-                virtual_key=virtual_key,
+                identity=identity,
                 tier="standard",
             )
             await enforce_rate_limits(
                 limiter=limiter,
                 settings=settings,
-                virtual_key=virtual_key,
+                identity=identity,
                 tier="standard",
             )
             with pytest.raises(HTTPException) as exc_info:
                 await enforce_rate_limits(
                     limiter=limiter,
                     settings=settings,
-                    virtual_key=virtual_key,
+                    identity=identity,
                     tier="standard",
                 )
             assert exc_info.value.status_code == 429
             assert exc_info.value.detail["scope"] == "burst"
 
             window = await limiter.peek(
-                virtual_key=virtual_key,
+                identity=identity,
                 tier="standard",
                 scope="window",
                 window_seconds=settings.rate_window_seconds,
                 limit=settings.standard_window_limit,
             )
             burst = await limiter.peek(
-                virtual_key=virtual_key,
+                identity=identity,
                 tier="standard",
                 scope="burst",
                 window_seconds=settings.burst_window_seconds,
@@ -82,12 +82,12 @@ def test_burst_rejection_does_not_consume_long_window_quota() -> None:
             )
             assert window.count == 2
             assert burst.count == 2
-            window_ttl = await redis.ttl(limiter._key(virtual_key, "standard", "window"))
-            burst_ttl = await redis.ttl(limiter._key(virtual_key, "standard", "burst"))
+            window_ttl = await redis.ttl(limiter._key(identity, "standard", "window"))
+            burst_ttl = await redis.ttl(limiter._key(identity, "standard", "burst"))
             assert 0 < window_ttl <= settings.rate_window_seconds + 60
             assert 0 < burst_ttl <= settings.burst_window_seconds + 60
         finally:
-            await _cleanup(limiter, virtual_key)
+            await _cleanup(limiter, identity)
             await redis.aclose()
 
     asyncio.run(scenario())
@@ -105,7 +105,7 @@ def test_redis_unavailability_fails_closed_with_503() -> None:
             await enforce_rate_limits(
                 limiter=FailingLimiter(),  # type: ignore[arg-type]
                 settings=settings,
-                virtual_key="sk-poiesis-test",
+                identity="stu-test",
                 tier="standard",
             )
         assert exc_info.value.status_code == 503
@@ -118,7 +118,7 @@ def test_concurrent_requests_cannot_race_past_long_window_quota() -> None:
     async def scenario() -> None:
         redis = await _redis_or_skip()
         limiter = SlidingWindowLimiter(redis)
-        virtual_key = f"sk-poiesis-test-{uuid.uuid4().hex}"
+        identity = f"stu-test-{uuid.uuid4().hex}"
         settings = Settings(
             _env_file=None,
             rate_window_seconds=300,
@@ -132,7 +132,7 @@ def test_concurrent_requests_cannot_race_past_long_window_quota() -> None:
                 await enforce_rate_limits(
                     limiter=limiter,
                     settings=settings,
-                    virtual_key=virtual_key,
+                    identity=identity,
                     tier="standard",
                 )
             except HTTPException as exc:
@@ -145,7 +145,7 @@ def test_concurrent_requests_cannot_race_past_long_window_quota() -> None:
             assert statuses.count(429) == 6
 
             window = await limiter.peek(
-                virtual_key=virtual_key,
+                identity=identity,
                 tier="standard",
                 scope="window",
                 window_seconds=settings.rate_window_seconds,
@@ -153,7 +153,7 @@ def test_concurrent_requests_cannot_race_past_long_window_quota() -> None:
             )
             assert window.count == 2
         finally:
-            await _cleanup(limiter, virtual_key)
+            await _cleanup(limiter, identity)
             await redis.aclose()
 
     asyncio.run(scenario())

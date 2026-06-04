@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     poiesis_admin_token: str | None = None
     allow_insecure_admin: bool = False
+    poiesis_key_hash_secret: str = "replace-with-local-key-hash-secret"
 
     model_config = SettingsConfigDict(
         env_file=".env",

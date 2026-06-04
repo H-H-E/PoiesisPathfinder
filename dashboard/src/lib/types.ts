@@ -1,6 +1,6 @@
 export interface StudentMetrics {
-  virtual_key: string;
-  virtual_key_preview: string;
+  student_id: string;
+  key_preview: string;
   student_name: string;
   total_tokens_consumed: number;
   is_active: boolean;

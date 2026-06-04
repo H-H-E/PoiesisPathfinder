@@ -92,13 +92,13 @@ class SlidingWindowLimiter:
         self.redis = redis
 
     @staticmethod
-    def _key(virtual_key: str, tier: str, scope: str) -> str:
-        return f"poiesis:rate:{tier}:{scope}:{virtual_key}"
+    def _key(identity: str, tier: str, scope: str) -> str:
+        return f"poiesis:rate:{tier}:{scope}:{identity}"
 
     async def check_and_record(
         self,
         *,
-        virtual_key: str,
+        identity: str,
         tier: str,
         scope: str,
         window_seconds: int,
@@ -109,7 +109,7 @@ class SlidingWindowLimiter:
         result = await self.redis.eval(
             CHECK_AND_RECORD_SCRIPT,
             1,
-            self._key(virtual_key, tier, scope),
+            self._key(identity, tier, scope),
             now,
             window_seconds,
             limit,
@@ -132,7 +132,7 @@ class SlidingWindowLimiter:
     async def check_and_record_window_and_burst(
         self,
         *,
-        virtual_key: str,
+        identity: str,
         tier: str,
         window_seconds: int,
         window_limit: int,
@@ -145,8 +145,8 @@ class SlidingWindowLimiter:
         result = await self.redis.eval(
             CHECK_AND_RECORD_PAIR_SCRIPT,
             2,
-            self._key(virtual_key, tier, "window"),
-            self._key(virtual_key, tier, "burst"),
+            self._key(identity, tier, "window"),
+            self._key(identity, tier, "burst"),
             now,
             window_seconds,
             window_limit,
@@ -189,13 +189,13 @@ class SlidingWindowLimiter:
     async def peek(
         self,
         *,
-        virtual_key: str,
+        identity: str,
         tier: str,
         scope: str,
         window_seconds: int,
         limit: int,
     ) -> LimitStatus:
-        key = self._key(virtual_key, tier, scope)
+        key = self._key(identity, tier, scope)
         now = time.time()
         await self.redis.zremrangebyscore(key, "-inf", now - window_seconds)
         count = int(await self.redis.zcard(key))
@@ -215,11 +215,11 @@ class SlidingWindowLimiter:
             window_seconds=window_seconds,
         )
 
-    async def reset(self, *, virtual_key: str, tier: str, include_burst: bool = True) -> int:
+    async def reset(self, *, identity: str, tier: str, include_burst: bool = True) -> int:
         scopes = ["window"]
         if include_burst:
             scopes.append("burst")
-        keys = [self._key(virtual_key, tier, scope) for scope in scopes]
+        keys = [self._key(identity, tier, scope) for scope in scopes]
         if not keys:
             return 0
         return int(await self.redis.delete(*keys))
