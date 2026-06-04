@@ -146,20 +146,20 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
 
 ## Milestone 7: Brutalist Telemetry Dashboard
 
-- [ ] Show all seven student tiles.
+- [x] Show all seven student tiles.
   - Each tile displays status, key preview, total spend, remaining monthly budget, and window counters.
-- [ ] Add live refresh.
+- [x] Add live refresh.
   - Acceptance: request counters update without page reload every 3-5 seconds.
-- [ ] Show standard and high-speed quota separately.
+- [x] Show standard and high-speed quota separately.
   - Acceptance: admin can see both five-hour remaining counts and burst remaining counts.
-- [ ] Add admin override actions.
+- [x] Add admin override actions.
   - Reset standard window.
   - Reset all windows.
   - Lock or unlock a key.
   - Apply a token delta.
-- [ ] Protect admin actions.
+- [x] Protect admin actions.
   - Acceptance: browser calls Next.js API routes; Next.js forwards `POIESIS_ADMIN_TOKEN` server-side.
-- [ ] Keep the UI operational and dense.
+- [x] Keep the UI operational and dense.
   - Avoid marketing copy.
   - Prioritize scan speed, contrast, keyboard access, and fixed dimensions for controls.
 
@@ -177,7 +177,7 @@ See `reports/engineering-hardening-plan.md` for the compound engineering review 
   - Burst window.
   - Token accounting.
   - Admin reset and token adjustment.
-- [ ] Add dashboard build check.
+- [x] Add dashboard build check.
   - Acceptance: `npm run build` completes inside `dashboard/`.
 - [ ] Add Docker smoke test.
   - Acceptance: compose starts, seed job runs, dashboard loads, dry-run chat request succeeds, spam request blocks.

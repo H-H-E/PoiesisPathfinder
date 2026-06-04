@@ -29,3 +29,20 @@ export interface UsersPayload {
   high_speed_burst_limit: number;
   burst_window_seconds: number;
 }
+
+export interface AuditEvent {
+  id: number;
+  request_id: string;
+  student_id: string | null;
+  key_preview: string | null;
+  token_delta: number;
+  route: string;
+  model: string | null;
+  status_code: number;
+  error_class: string | null;
+  created_at: string;
+}
+
+export interface AuditPayload {
+  events: AuditEvent[];
+}

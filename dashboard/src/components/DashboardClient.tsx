@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { StudentMetrics, UsersPayload } from "@/lib/types";
+import type { AuditPayload, StudentMetrics, UsersPayload } from "@/lib/types";
 
 const TEN_THOUSAND = 10_000;
 
@@ -18,6 +18,18 @@ function formatWindow(seconds: number): string {
   return `${minutes}m`;
 }
 
+function formatAuditTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) {
@@ -29,6 +41,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export default function DashboardClient() {
   const [payload, setPayload] = useState<UsersPayload | null>(null);
+  const [auditPayload, setAuditPayload] = useState<AuditPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyStudentId, setBusyStudentId] = useState<string | null>(null);
@@ -36,8 +49,12 @@ export default function DashboardClient() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const data = await requestJson<UsersPayload>("/api/users");
+      const [data, auditData] = await Promise.all([
+        requestJson<UsersPayload>("/api/users"),
+        requestJson<AuditPayload>("/api/audit-log?limit=8"),
+      ]);
       setPayload(data);
+      setAuditPayload(auditData);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to fetch gateway metrics.");
@@ -258,6 +275,35 @@ export default function DashboardClient() {
           <p>Run the seed job, then this board will populate automatically.</p>
         </section>
       ) : null}
+
+      <section className="audit-panel" aria-label="Recent gateway audit events">
+        <div className="audit-heading">
+          <h2>Recent Audit</h2>
+          <span>{auditPayload ? `${auditPayload.events.length} events` : "0 events"}</span>
+        </div>
+        <div className="audit-list">
+          {(auditPayload?.events ?? []).map((event) => (
+            <div className="audit-row" key={event.id}>
+              <span>{formatAuditTime(event.created_at)}</span>
+              <strong>{event.student_id ?? "unknown"}</strong>
+              <span>{event.status_code}</span>
+              <span>{event.token_delta > 0 ? `+${formatNumber(event.token_delta)}` : formatNumber(event.token_delta)}</span>
+              <span>{event.error_class ?? "ok"}</span>
+              <span>{event.request_id}</span>
+            </div>
+          ))}
+          {!isLoading && auditPayload?.events.length === 0 ? (
+            <div className="audit-row empty">
+              <span>--:--:--</span>
+              <strong>none</strong>
+              <span>000</span>
+              <span>0</span>
+              <span>idle</span>
+              <span>no audit events</span>
+            </div>
+          ) : null}
+        </div>
+      </section>
     </main>
   );
 }
